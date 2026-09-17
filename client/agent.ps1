@@ -55,9 +55,19 @@ if (-not $isAdmin) {
 $HostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
 $QueueDir  = "$env:ProgramData\WebBlock"
 $QueueFile = "$QueueDir\queue.json"
+$LogFile   = "$QueueDir\agent.log"
 
 if (-not (Test-Path $QueueDir)) {
     New-Item -ItemType Directory -Path $QueueDir -Force | Out-Null
+}
+
+function Log-Agent([string]$msg, [string]$color = "White") {
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    $text = "[$ts] $msg"
+    Write-Host $text -ForegroundColor $color
+    try {
+        Add-Content -Path $LogFile -Value $text -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
 }
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction SilentlyContinue
@@ -320,13 +330,14 @@ function Test-IsNewerVersion([string]$remote, [string]$local) {
 
 function Check-AgentUpdate {
     try {
+        Write-Host "[AutoUpdate] Comprobando version en servidor..." -ForegroundColor DarkGray
         $verInfo = Invoke-RestMethod -Uri "$ServerUrl/api/agent/version" -Method Get -Headers $authHeaders -TimeoutSec 5 -ErrorAction Stop
         $remoteVersion = "$($verInfo.version)".Trim()
         if (-not (Test-IsNewerVersion -remote $remoteVersion -local $AgentVersion)) {
             return
         }
 
-        Write-Host "[AutoUpdate] Nueva version detectada en servidor: v$remoteVersion (Actual: v$AgentVersion). Descargando..." -ForegroundColor Cyan
+        Log-Agent "[AutoUpdate] Nueva version detectada en servidor: v$remoteVersion (Actual: v$AgentVersion). Descargando..." "Cyan"
 
         $dlPath = $verInfo.download_url
         $downloadUrl = if ($dlPath -match "^https?://") { $dlPath } else { "$ServerUrl$dlPath" }
@@ -349,7 +360,7 @@ function Check-AgentUpdate {
         # Validacion 1: Comprobar tamano minimo para evitar archivos vacios por cortes Starlink
         $tempItem = Get-Item $tempFile -ErrorAction SilentlyContinue
         if (-not $tempItem -or $tempItem.Length -lt 2048) {
-            Write-Warning "[AutoUpdate] Descarga truncada o corrupta (<2KB). Abortando actualizacion."
+            Log-Agent "[AutoUpdate] Descarga truncada o corrupta (<2KB). Abortando actualizacion." "Yellow"
             Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
             return
         }
@@ -359,7 +370,7 @@ function Check-AgentUpdate {
         $tokens = $null
         [System.Management.Automation.Language.Parser]::ParseFile($tempFile, [ref]$tokens, [ref]$parseErrors) | Out-Null
         if ($parseErrors -and $parseErrors.Count -gt 0) {
-            Write-Warning "[AutoUpdate] Error de sintaxis en script descargado ($($parseErrors.Count) errores). Abortando actualizacion."
+            Log-Agent "[AutoUpdate] Error de sintaxis en script descargado ($($parseErrors.Count) errores). Abortando actualizacion." "Yellow"
             Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
             return
         }
@@ -377,7 +388,7 @@ function Check-AgentUpdate {
             } | ConvertTo-Json | Set-Content -Path $script:ConfigFile -Encoding UTF8 -Force
         } catch {}
 
-        Write-Host "[AutoUpdate] Actualizacion a v$remoteVersion completada con exito. Reiniciando agente..." -ForegroundColor Green
+        Log-Agent "[AutoUpdate] Actualizacion a v$remoteVersion completada con exito. Reiniciando agente..." "Green"
 
         # Relanzar nuevo proceso con los mismos parametros
         $argList = @(
@@ -397,7 +408,7 @@ function Check-AgentUpdate {
         Start-Process -FilePath "powershell.exe" -ArgumentList $argList
         Exit 0
     } catch {
-        Write-Warning "[AutoUpdate] Error comprobando/aplicando actualizacion: $_"
+        Log-Agent "[AutoUpdate] Error comprobando/aplicando actualizacion: $_" "Yellow"
         if ($tempFile -and (Test-Path $tempFile)) {
             Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
         }
@@ -405,7 +416,7 @@ function Check-AgentUpdate {
 }
 
 # --- Main Runtime Loop ---
-Write-Host "Starting WebBlock Agent -> Target Server: $ServerUrl (v$AgentVersion)"
+Log-Agent "Starting WebBlock Agent -> Target Server: $ServerUrl (v$AgentVersion)" "Green"
 $script:DeviceId = $null
 $script:LastBlocklist = $null
 $lastHeartbeat = [DateTime]::MinValue
