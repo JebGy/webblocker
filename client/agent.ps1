@@ -16,7 +16,7 @@ param(
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.0.1"
+$AgentVersion = "1.0.2"
 
 # --- Configuration Persistence (Retain First Installation Values) ---
 $ConfigFile = "$env:ProgramData\WebBlock\config.json"
@@ -417,6 +417,7 @@ function Check-AgentUpdate {
 
 # --- Main Runtime Loop ---
 Log-Agent "Starting WebBlock Agent -> Target Server: $ServerUrl (v$AgentVersion)" "Green"
+Log-Agent ">>> [v1.0.2 TEST E2E EXITOSO] Auto-actualizacion completada en caliente <<<" "Magenta"
 $script:DeviceId = $null
 $script:LastBlocklist = $null
 $lastHeartbeat = [DateTime]::MinValue
