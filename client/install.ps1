@@ -157,6 +157,10 @@ Write-Host "Configurando WebBlock en esta terminal..." -ForegroundColor Cyan
 # 3. Directorio protegido en Program Files
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+} else {
+    # Desbloquear temporalmente para permitir sobreescritura de actualizaciones
+    takeown /f "$InstallDir" /r /d y 2>$null | Out-Null
+    icacls "$InstallDir" /grant "$($env:USERNAME):(F)" /t /Q 2>$null | Out-Null
 }
 Copy-Item -Path "$PSScriptRoot\agent.ps1" -Destination $TargetScript -Force
 
@@ -190,7 +194,6 @@ Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Silent
 $Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$TargetScript`" -ServerUrl `"$ServerUrl`" -ApiKey `"$ApiKey`""
 $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $Arguments
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
-$Principal = New-ScheduledTaskPrincipal -GroupId $adminGroup -RunLevel Highest
 
 $Settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
@@ -199,15 +202,24 @@ $Settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit 0
 
-Register-ScheduledTask `
-    -TaskName $TaskName `
-    -Action $Action `
-    -Trigger $Trigger `
-    -Principal $Principal `
-    -Settings $Settings `
-    -Description "WebBlock Enterprise Agent - Control de Ancho de Banda Starlink"
+$registered = $false
+try {
+    $Principal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-544" -RunLevel Highest
+    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description "WebBlock Enterprise Agent" -ErrorAction Stop | Out-Null
+    $registered = $true
+} catch {}
 
-Start-ScheduledTask -TaskName $TaskName
+if (-not $registered) {
+    try {
+        $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -RunLevel Highest
+        Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description "WebBlock Enterprise Agent" -ErrorAction Stop | Out-Null
+        $registered = $true
+    } catch {
+        Write-Warning "Fallo al registrar la tarea: $_"
+    }
+}
+
+Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 
 if (-not $Silent) {
     [System.Windows.Forms.MessageBox]::Show(

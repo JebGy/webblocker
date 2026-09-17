@@ -76,6 +76,37 @@ function Get-HardwareProfile {
 }
 
 # --- Hosts File & Firewall Domain Blocker ---
+function Expand-BlockedDomains([string[]]$domains) {
+    $expanded = @()
+    foreach ($d in $domains) {
+        $clean = "$d".Trim().ToLower()
+        if (-not $clean) { continue }
+        $expanded += $clean
+        if (-not $clean.StartsWith("www.")) { $expanded += "www.$clean" }
+        if (-not $clean.StartsWith("m."))   { $expanded += "m.$clean" }
+
+        if ($clean -match "youtube|youtu\.be") {
+            $expanded += "youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "s.youtube.com", "googlevideo.com", "ytimg.com"
+        }
+        if ($clean -match "facebook|fb\.com") {
+            $expanded += "facebook.com", "www.facebook.com", "m.facebook.com", "fb.com", "fbcdn.net"
+        }
+        if ($clean -match "tiktok") {
+            $expanded += "tiktok.com", "www.tiktok.com", "m.tiktok.com", "tiktokcdn.com"
+        }
+        if ($clean -match "instagram") {
+            $expanded += "instagram.com", "www.instagram.com", "cdninstagram.com"
+        }
+        if ($clean -match "twitter|\bx\.com\b") {
+            $expanded += "twitter.com", "www.twitter.com", "x.com", "www.x.com", "twimg.com"
+        }
+        if ($clean -match "netflix") {
+            $expanded += "netflix.com", "www.netflix.com", "nflxvideo.net"
+        }
+    }
+    return @($expanded | Select-Object -Unique)
+}
+
 function Update-HostsBlocklist([string[]]$domains) {
     if (-not (Test-Path $HostsPath)) { return }
 
@@ -87,21 +118,13 @@ function Update-HostsBlocklist([string[]]$domains) {
         $pattern = "(?s)$([regex]::Escape($startTag)).*?$([regex]::Escape($endTag))\r?\n?"
         $cleanContent = $content -replace $pattern, ""
 
-        if ($domains.Count -gt 0) {
-            $blockLines = @($startTag)
-            foreach ($d in $domains) {
-                $dClean = $d.Trim().ToLower()
-                if ($dClean) {
-                    $targets = @($dClean)
-                    if (-not $dClean.StartsWith("www.")) { $targets += "www.$dClean" }
-                    if (-not $dClean.StartsWith("m."))   { $targets += "m.$dClean" }
-                    if ($dClean -eq "youtube.com")       { $targets += "youtu.be", "m.youtube.com", "s.youtube.com", "googlevideo.com" }
+        $allTargets = Expand-BlockedDomains -domains $domains
 
-                    foreach ($t in ($targets | Select-Object -Unique)) {
-                        $blockLines += "0.0.0.0 $t"
-                        $blockLines += "::1 $t"
-                    }
-                }
+        if ($allTargets.Count -gt 0) {
+            $blockLines = @($startTag)
+            foreach ($t in $allTargets) {
+                $blockLines += "0.0.0.0 $t"
+                $blockLines += "::1 $t"
             }
             $blockLines += $endTag
             $newSection = ($blockLines -join "`r`n") + "`r`n"
@@ -120,24 +143,18 @@ function Update-HostsBlocklist([string[]]$domains) {
 function Sync-FirewallRules([string[]]$domains) {
     Get-NetFirewallRule -DisplayName "WebBlock_*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
 
-    if (-not $domains -or $domains.Count -eq 0) { return }
+    $allTargets = Expand-BlockedDomains -domains $domains
+    if (-not $allTargets -or $allTargets.Count -eq 0) { return }
 
     $allIps = @()
-    foreach ($d in $domains) {
-        $clean = $d.Trim().ToLower()
-        if ($clean) {
-            try {
-                $ips = [System.Net.Dns]::GetHostAddresses($clean) | ForEach-Object { $_.IPAddressToString }
-                $allIps += $ips
-            } catch {}
-            try {
-                $ipsWww = [System.Net.Dns]::GetHostAddresses("www.$clean") | ForEach-Object { $_.IPAddressToString }
-                $allIps += $ipsWww
-            } catch {}
-        }
+    foreach ($t in $allTargets) {
+        try {
+            $ips = [System.Net.Dns]::GetHostAddresses($t) | ForEach-Object { $_.IPAddressToString }
+            $allIps += $ips
+        } catch {}
     }
 
-    $uniqueIps = $allIps | Select-Object -Unique
+    $uniqueIps = @($allIps | Select-Object -Unique)
     if ($uniqueIps -and $uniqueIps.Count -gt 0) {
         try {
             New-NetFirewallRule -DisplayName "WebBlock_Outbound" `
