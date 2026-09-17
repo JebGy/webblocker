@@ -3,7 +3,7 @@ import uuid
 import csv
 import io
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -77,7 +77,7 @@ class ActivityItem(BaseModel):
 
 class BatchActivityRequest(BaseModel):
     device_id: str
-    activities: List[ActivityItem]
+    activities: Union[List[ActivityItem], ActivityItem]
 
 
 class BlockDomainCreate(BaseModel):
@@ -199,6 +199,8 @@ def ingest_activity(payload: BatchActivityRequest, db: Session = Depends(get_db)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
+    items = payload.activities if isinstance(payload.activities, list) else [payload.activities]
+
     records = [
         WebActivity(
             device_id=payload.device_id,
@@ -206,7 +208,7 @@ def ingest_activity(payload: BatchActivityRequest, db: Session = Depends(get_db)
             duration_seconds=item.duration_seconds,
             logged_at=item.logged_at or datetime.now(timezone.utc),
         )
-        for item in payload.activities
+        for item in items
         if item.domain
     ]
     db.bulk_save_objects(records)
