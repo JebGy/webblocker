@@ -11,12 +11,12 @@ param(
     [string]$ApiKey = "wb_agent_secret_2026",
     [int]$SampleIntervalSeconds = 3,
     [int]$HeartbeatIntervalSeconds = 300,
-    [int]$FlushIntervalSeconds = 15,
+    [int]$FlushIntervalSeconds = 3,
     [int]$SyncBlocklistIntervalSeconds = 10,
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.0.3"
+$AgentVersion = "1.0.4"
 
 # --- Configuration Persistence (Retain First Installation Values) ---
 $ConfigFile = "$env:ProgramData\WebBlock\config.json"
@@ -442,7 +442,8 @@ while ($true) {
         try {
             $hw = Get-HardwareProfile
             $body = $hw | ConvertTo-Json
-            $resp = Invoke-RestMethod -Uri "$ServerUrl/api/heartbeat" -Method Post -Headers $authHeaders -Body $body -ContentType "application/json" -TimeoutSec 10 -ErrorAction Stop
+            $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+            $resp = Invoke-RestMethod -Uri "$ServerUrl/api/heartbeat" -Method Post -Headers $authHeaders -Body $bodyBytes -ContentType "application/json; charset=utf-8" -TimeoutSec 10 -ErrorAction Stop
             $script:DeviceId = $resp.device_id
             $lastHeartbeat = $now
             $consecutiveFailures = 0

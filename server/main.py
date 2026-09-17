@@ -14,8 +14,19 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 
+# Load .env configuration
+_env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_env_path):
+    with open(_env_path, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
+
 # Database configuration (overridable with DATABASE_URL environment variable)
-DEFAULT_DB_URL = "sqlite:///./webblock.db"
+DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "webblock.db")).replace("\\", "/")
+DEFAULT_DB_URL = f"sqlite:///{DB_PATH}"
 DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DB_URL)
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -129,7 +140,7 @@ def verify_admin(x_admin_key: Optional[str] = Header(None)):
     raise HTTPException(status_code=401, detail="Unauthorized: Admin Key required")
 
 
-LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.3")
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.4")
 
 
 # --- Versioning & Auto-Update Endpoints ---
