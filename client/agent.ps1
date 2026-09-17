@@ -16,7 +16,7 @@ param(
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.0.4"
+$AgentVersion = "1.0.5"
 
 # --- Configuration Persistence (Retain First Installation Values) ---
 $ConfigFile = "$env:ProgramData\WebBlock\config.json"
@@ -141,6 +141,22 @@ function Expand-BlockedDomains([string[]]$domains) {
         if ($clean -match "netflix") {
             $expanded += "netflix.com", "www.netflix.com", "nflxvideo.net"
         }
+        if ($clean -match "atlassian|jira") {
+            $expanded += "atlassian.com", "www.atlassian.com", "m.atlassian.com", "id.atlassian.com", "auth.atlassian.com"
+            $expanded += "atlassian.net", "www.atlassian.net", "m.atlassian.net", "id.atlassian.net"
+            $expanded += "jira.com", "www.jira.com"
+        }
+
+        # Expansion dinamica de subdominios activos desde el cache DNS
+        try {
+            $baseDomain = $clean -replace '^www\.', ''
+            $cachedSubdomains = Get-DnsClientCache -ErrorAction SilentlyContinue |
+                Where-Object { $_.Entry -like "*.$baseDomain" -or $_.Entry -eq $baseDomain } |
+                Select-Object -ExpandProperty Entry
+            if ($cachedSubdomains) {
+                $expanded += $cachedSubdomains
+            }
+        } catch {}
     }
     return @($expanded | Select-Object -Unique)
 }
