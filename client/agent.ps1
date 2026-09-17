@@ -192,16 +192,20 @@ function Sync-FirewallRules([string[]]$domains) {
         } catch {}
     }
 
-    $uniqueIps = @($allIps | Select-Object -Unique)
-    if ($uniqueIps -and $uniqueIps.Count -gt 0) {
+    # Filtrar direcciones no validas para Windows Firewall (loopback, 0.0.0.0, link-local, etc.)
+    $validIps = @($allIps | Where-Object { 
+        $_ -and $_ -notmatch '^(0\.0\.0\.0|127\.|169\.254\.|::1|::$)' 
+    } | Select-Object -Unique)
+
+    if ($validIps -and $validIps.Count -gt 0) {
         try {
             New-NetFirewallRule -DisplayName "WebBlock_Outbound" `
                 -Direction Outbound `
                 -Action Block `
-                -RemoteAddress $uniqueIps `
+                -RemoteAddress $validIps `
                 -Description "WebBlock active domain restriction" `
                 -ErrorAction Stop | Out-Null
-            Write-Host "[Firewall] Regla activa: $($uniqueIps.Count) IPs bloqueadas." -ForegroundColor Yellow
+            Write-Host "[Firewall] Regla activa: $($validIps.Count) IPs bloqueadas." -ForegroundColor Yellow
         } catch {
             Write-Warning "No se pudo inyectar regla en Firewall (requiere permisos de Administrador): $_"
         }
@@ -215,12 +219,14 @@ function Apply-Blocklist([string[]]$domains) {
 
 # --- Offline Queue Management (Starlink drops tolerance) ---
 function Save-Queue($items) {
-    if ($items -and $items.Count -gt 0) {
-        $json = $items | ConvertTo-Json -Compress
-        Set-Content -Path $QueueFile -Value $json -Encoding UTF8 -Force
-    } elseif (Test-Path $QueueFile) {
-        Remove-Item $QueueFile -Force -ErrorAction SilentlyContinue
-    }
+    try {
+        if ($items -and $items.Count -gt 0) {
+            $json = $items | ConvertTo-Json -Compress
+            Set-Content -Path $QueueFile -Value $json -Encoding UTF8 -Force -ErrorAction Stop
+        } elseif (Test-Path $QueueFile) {
+            Remove-Item $QueueFile -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
 }
 
 function Load-Queue {
@@ -504,7 +510,8 @@ while ($true) {
                     activities = [object[]]$queue
                 } | ConvertTo-Json -Depth 4
 
-                Invoke-RestMethod -Uri "$ServerUrl/api/activity" -Method Post -Headers $authHeaders -Body $payload -ContentType "application/json" -TimeoutSec 15 -ErrorAction Stop | Out-Null
+                $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+                Invoke-RestMethod -Uri "$ServerUrl/api/activity" -Method Post -Headers $authHeaders -Body $bodyBytes -ContentType "application/json; charset=utf-8" -TimeoutSec 15 -ErrorAction Stop | Out-Null
                 Write-Host "Flushed $($queue.Count) activity items to server."
                 Save-Queue @()
                 $consecutiveFailures = 0
