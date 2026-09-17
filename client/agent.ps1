@@ -12,14 +12,42 @@ param(
     [int]$SampleIntervalSeconds = 3,
     [int]$HeartbeatIntervalSeconds = 300,
     [int]$FlushIntervalSeconds = 15,
-    [int]$SyncBlocklistIntervalSeconds = 10
+    [int]$SyncBlocklistIntervalSeconds = 10,
+    [int]$UpdateCheckIntervalSeconds = 20
 )
+
+$AgentVersion = "1.0.1"
+
+# --- Configuration Persistence (Retain First Installation Values) ---
+$ConfigFile = "$env:ProgramData\WebBlock\config.json"
+if (Test-Path $ConfigFile) {
+    try {
+        $cfg = Get-Content $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($cfg.server_url -and ($ServerUrl -eq "http://localhost:8000" -or -not $PSBoundParameters.ContainsKey('ServerUrl'))) {
+            $ServerUrl = $cfg.server_url
+        }
+        if ($cfg.api_key -and ($ApiKey -eq "wb_agent_secret_2026" -or -not $PSBoundParameters.ContainsKey('ApiKey'))) {
+            $ApiKey = $cfg.api_key
+        }
+    } catch {}
+} else {
+    try {
+        if (-not (Test-Path (Split-Path $ConfigFile))) {
+            New-Item -ItemType Directory -Path (Split-Path $ConfigFile) -Force | Out-Null
+        }
+        @{
+            server_url   = $ServerUrl
+            api_key      = $ApiKey
+            installed_at = (Get-Date).ToString("o")
+        } | ConvertTo-Json | Set-Content -Path $ConfigFile -Encoding UTF8 -Force
+    } catch {}
+}
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "================================================================" -ForegroundColor Red
     Write-Host " [ADVERTENCIA] Script ejecutado SIN privilegios de Administrador." -ForegroundColor Yellow
-    Write-Host " Para bloquear tráfico en 'hosts' y Firewall de Windows," -ForegroundColor Yellow
+    Write-Host " Para bloquear trafico en 'hosts' y Firewall de Windows," -ForegroundColor Yellow
     Write-Host " abre PowerShell como Administrador o usa: .\client\install.ps1" -ForegroundColor Yellow
     Write-Host "================================================================" -ForegroundColor Red
 }
@@ -277,12 +305,112 @@ function Get-ActiveBrowserDomain {
     return ($clean.Trim() -replace '[^\w\.\-]', '')
 }
 
+# --- Self-Update & Version Verification ---
+function Test-IsNewerVersion([string]$remote, [string]$local) {
+    if ([string]::IsNullOrWhiteSpace($remote)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($local)) { return $true }
+    try {
+        $rNorm = if ($remote -notmatch '\.') { "$remote.0" } else { $remote }
+        $lNorm = if ($local -notmatch '\.') { "$local.0" } else { $local }
+        return ([version]$rNorm -gt [version]$lNorm)
+    } catch {
+        return ($remote.Trim() -ne $local.Trim())
+    }
+}
+
+function Check-AgentUpdate {
+    try {
+        $verInfo = Invoke-RestMethod -Uri "$ServerUrl/api/agent/version" -Method Get -Headers $authHeaders -TimeoutSec 5 -ErrorAction Stop
+        $remoteVersion = "$($verInfo.version)".Trim()
+        if (-not (Test-IsNewerVersion -remote $remoteVersion -local $AgentVersion)) {
+            return
+        }
+
+        Write-Host "[AutoUpdate] Nueva version detectada en servidor: v$remoteVersion (Actual: v$AgentVersion). Descargando..." -ForegroundColor Cyan
+
+        $dlPath = $verInfo.download_url
+        $downloadUrl = if ($dlPath -match "^https?://") { $dlPath } else { "$ServerUrl$dlPath" }
+
+        $targetPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Definition }
+        if (-not $targetPath -or -not (Test-Path $targetPath)) {
+            $targetPath = "$env:ProgramFiles\WebBlock\agent.ps1"
+        }
+
+        $targetDir = Split-Path -Parent $targetPath
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+
+        $tempFile = Join-Path $targetDir "agent_update_$([Guid]::NewGuid().ToString('N').Substring(0,8)).tmp"
+
+        # Descargar nuevo script con cabecera de autenticacion
+        Invoke-RestMethod -Uri $downloadUrl -Method Get -Headers $authHeaders -OutFile $tempFile -TimeoutSec 15 -ErrorAction Stop
+
+        # Validacion 1: Comprobar tamano minimo para evitar archivos vacios por cortes Starlink
+        $tempItem = Get-Item $tempFile -ErrorAction SilentlyContinue
+        if (-not $tempItem -or $tempItem.Length -lt 2048) {
+            Write-Warning "[AutoUpdate] Descarga truncada o corrupta (<2KB). Abortando actualizacion."
+            Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
+            return
+        }
+
+        # Validacion 2: Parser sintactico AST para garantizar que el archivo PowerShell es 100% valido
+        $parseErrors = $null
+        $tokens = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($tempFile, [ref]$tokens, [ref]$parseErrors) | Out-Null
+        if ($parseErrors -and $parseErrors.Count -gt 0) {
+            Write-Warning "[AutoUpdate] Error de sintaxis en script descargado ($($parseErrors.Count) errores). Abortando actualizacion."
+            Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
+            return
+        }
+
+        # Reemplazo atomico en disco (PowerShell ejecuta en memoria, el archivo en disco no esta bloqueado)
+        Move-Item -Path $tempFile -Destination $targetPath -Force -ErrorAction Stop
+
+        # Actualizar metadata persistente conservando ServerUrl y ApiKey originales
+        try {
+            @{
+                server_url   = $ServerUrl
+                api_key      = $ApiKey
+                version      = $remoteVersion
+                updated_at   = (Get-Date).ToString("o")
+            } | ConvertTo-Json | Set-Content -Path $script:ConfigFile -Encoding UTF8 -Force
+        } catch {}
+
+        Write-Host "[AutoUpdate] Actualizacion a v$remoteVersion completada con exito. Reiniciando agente..." -ForegroundColor Green
+
+        # Relanzar nuevo proceso con los mismos parametros
+        $argList = @(
+            "-ExecutionPolicy", "Bypass",
+            "-NoProfile",
+            "-WindowStyle", "Hidden",
+            "-File", "`"$targetPath`"",
+            "-ServerUrl", "`"$ServerUrl`"",
+            "-ApiKey", "`"$ApiKey`"",
+            "-SampleIntervalSeconds", "$SampleIntervalSeconds",
+            "-HeartbeatIntervalSeconds", "$HeartbeatIntervalSeconds",
+            "-FlushIntervalSeconds", "$FlushIntervalSeconds",
+            "-SyncBlocklistIntervalSeconds", "$SyncBlocklistIntervalSeconds",
+            "-UpdateCheckIntervalSeconds", "$UpdateCheckIntervalSeconds"
+        ) -join " "
+
+        Start-Process -FilePath "powershell.exe" -ArgumentList $argList
+        Exit 0
+    } catch {
+        Write-Warning "[AutoUpdate] Error comprobando/aplicando actualizacion: $_"
+        if ($tempFile -and (Test-Path $tempFile)) {
+            Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # --- Main Runtime Loop ---
-Write-Host "Starting WebBlock Agent -> Target Server: $ServerUrl"
+Write-Host "Starting WebBlock Agent -> Target Server: $ServerUrl (v$AgentVersion)"
 $script:DeviceId = $null
 $script:LastBlocklist = $null
 $lastHeartbeat = [DateTime]::MinValue
 $lastBlocklistSync = [DateTime]::MinValue
+$lastUpdateCheck = [DateTime]::MinValue
 $lastFlush     = [DateTime]::UtcNow
 $pendingActivity = @{} # domain -> duration_seconds
 $authHeaders = @{ "X-Agent-Key" = $ApiKey }
@@ -321,6 +449,12 @@ while ($true) {
                 Write-Host "[Bloqueo] Lista activa actualizada: $(if ($normalized) { $normalized -join ', ' } else { 'Ninguno' })" -ForegroundColor Red
             }
         } catch {}
+    }
+
+    # 1c. Periodic Self-Update Check (every 20s)
+    if (($now - $lastUpdateCheck).TotalSeconds -ge $UpdateCheckIntervalSeconds) {
+        $lastUpdateCheck = $now
+        Check-AgentUpdate
     }
 
     # 2. Sample Foreground Window Focus

@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 from pydantic import BaseModel
 from sqlalchemy import (
     create_engine, Column, String, Boolean, Integer, DateTime, ForeignKey, func, select
@@ -127,6 +127,33 @@ def verify_admin(x_admin_key: Optional[str] = Header(None)):
     if x_admin_key == ADMIN_API_KEY:
         return True
     raise HTTPException(status_code=401, detail="Unauthorized: Admin Key required")
+
+
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.1")
+
+
+# --- Versioning & Auto-Update Endpoints ---
+@app.get("/api/agent/version")
+def get_agent_version(_: bool = Depends(verify_agent_or_admin)):
+    """Returns the latest agent version and download path."""
+    return {
+        "version": LATEST_AGENT_VERSION,
+        "download_url": "/api/agent/download"
+    }
+
+
+@app.get("/api/agent/download")
+def download_agent_script(_: bool = Depends(verify_agent_or_admin)):
+    """Serves the latest agent.ps1 file for client self-updates."""
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "..", "client", "agent.ps1"),
+        os.path.join(os.path.dirname(__file__), "agent.ps1"),
+        os.path.abspath("client/agent.ps1"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return FileResponse(path, media_type="text/plain", filename="agent.ps1")
+    raise HTTPException(status_code=404, detail="Agent script not found on server")
 
 
 # --- Agent Endpoints ---

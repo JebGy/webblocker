@@ -18,6 +18,15 @@ if (-not $isAdmin) {
     exit 1
 }
 
+$ConfigFile = "$env:ProgramData\WebBlock\config.json"
+if (Test-Path $ConfigFile) {
+    try {
+        $cfg = Get-Content $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($cfg.server_url -and ($ServerUrl -eq "http://localhost:8000" -or -not $PSBoundParameters.ContainsKey('ServerUrl'))) { $ServerUrl = $cfg.server_url }
+        if ($cfg.api_key -and ($ApiKey -eq "wb_agent_secret_2026" -or -not $PSBoundParameters.ContainsKey('ApiKey'))) { $ApiKey = $cfg.api_key }
+    } catch {}
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -163,6 +172,15 @@ if (-not (Test-Path $InstallDir)) {
     icacls "$InstallDir" /grant "$($env:USERNAME):(F)" /t /Q 2>$null | Out-Null
 }
 Copy-Item -Path "$PSScriptRoot\agent.ps1" -Destination $TargetScript -Force
+
+# Persistir configuracion inicial de instalacion
+$ConfigDir = "$env:ProgramData\WebBlock"
+if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null }
+@{
+    server_url   = $ServerUrl
+    api_key      = $ApiKey
+    installed_at = (Get-Date).ToString("o")
+} | ConvertTo-Json | Set-Content -Path "$ConfigDir\config.json" -Encoding UTF8 -Force
 
 # 4. Anti-Tamper: Restringir permisos NTFS (Solo Administradores pueden editar o borrar)
 $adminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
