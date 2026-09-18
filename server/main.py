@@ -202,7 +202,19 @@ def download_client_zip(server_url: Optional[str] = None):
                 z.write(fpath, arcname=fname)
 
         srv = server_url or "http://localhost:8000"
-        bat = f'@echo off\r\necho Instalando WebBlock Agent...\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0install.ps1" -ServerUrl "{srv}" -ApiKey "{AGENT_API_KEY}" -Silent\r\necho Instalacion completada exitosamente.\r\npause\r\n'
+        bat = (
+            "@echo off\r\n"
+            "net session >nul 2>&1\r\n"
+            "if %errorlevel% neq 0 (\r\n"
+            '    echo Elevando privilegios de Administrador...\r\n'
+            '    powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "Start-Process cmd -ArgumentList \'/c \"\"%~f0\"\"\' -Verb RunAs"\r\n'
+            "    exit /b\r\n"
+            ")\r\n"
+            "echo Instalando WebBlock Enterprise Agent (Bypass de directivas activo)...\r\n"
+            f'powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0install.ps1" -ServerUrl "{srv}" -ApiKey "{AGENT_API_KEY}" -Silent\r\n'
+            "echo Instalacion completada exitosamente.\r\n"
+            "timeout /t 5\r\n"
+        )
         z.writestr("instalar_automatico.bat", bat)
 
     buf.seek(0)
