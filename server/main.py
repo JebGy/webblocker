@@ -2,6 +2,7 @@ import os
 import uuid
 import csv
 import io
+import zipfile
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Union
@@ -182,6 +183,34 @@ def download_agent_script(_: bool = Depends(verify_agent_or_admin)):
         if os.path.exists(path):
             return FileResponse(path, media_type="text/plain", filename="agent.ps1")
     raise HTTPException(status_code=404, detail="Agent script not found on server")
+
+
+@app.get("/api/client/zip")
+def download_client_zip(server_url: Optional[str] = None):
+    """Serves the complete client installer package as a ZIP."""
+    client_dir = os.path.join(os.path.dirname(__file__), "client")
+    if not os.path.exists(client_dir):
+        client_dir = os.path.join(os.path.dirname(__file__), "..", "client")
+    if not os.path.exists(client_dir):
+        raise HTTPException(status_code=404, detail="Client directory not found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for fname in ["agent.ps1", "install.ps1", "deploy_silent.bat", "uninstall.ps1"]:
+            fpath = os.path.join(client_dir, fname)
+            if os.path.exists(fpath):
+                z.write(fpath, arcname=fname)
+
+        srv = server_url or "http://localhost:8000"
+        bat = f'@echo off\r\necho Instalando WebBlock Agent...\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0install.ps1" -ServerUrl "{srv}" -ApiKey "{AGENT_API_KEY}" -Silent\r\necho Instalacion completada exitosamente.\r\npause\r\n'
+        z.writestr("instalar_automatico.bat", bat)
+
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=WebBlock-Client.zip"}
+    )
 
 
 # --- Agent Endpoints ---

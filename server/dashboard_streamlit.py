@@ -1,9 +1,55 @@
+import os
+import io
+import zipfile
 import streamlit as st
 import pandas as pd
-from main import engine, SessionLocal, BlockedDomain, clean_domain_input
+from main import engine, SessionLocal, BlockedDomain, clean_domain_input, AGENT_API_KEY
 
 st.set_page_config(page_title="WebBlock Live", layout="wide")
 st.title("🛡️ WebBlock Live Monitor")
+
+# --- Paquete de Instalación para Clientes ---
+with st.expander("📦 Despliegue en Terminales Windows (Descargar / Copiar Enlace)", expanded=True):
+    default_url = os.getenv("SERVER_URL", "https://governance-webblockserver.tc5u8q.easypanel.host")
+    col_u, col_k = st.columns([2, 1])
+    with col_u:
+        server_url = st.text_input("URL del Servidor API (donde reportarán los agentes):", value=default_url).rstrip("/")
+    with col_k:
+        api_key = st.text_input("API Key del Agente:", value=AGENT_API_KEY)
+
+    # Generación en memoria del paquete ZIP preconfigurado
+    client_dir = os.path.join(os.path.dirname(__file__), "client")
+    if not os.path.exists(client_dir):
+        client_dir = os.path.join(os.path.dirname(__file__), "..", "client")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        for fname in ["agent.ps1", "install.ps1", "deploy_silent.bat", "uninstall.ps1"]:
+            fpath = os.path.join(client_dir, fname)
+            if os.path.exists(fpath):
+                z.write(fpath, arcname=fname)
+        bat = f'@echo off\r\necho Instalando WebBlock Agent...\r\npowershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0install.ps1" -ServerUrl "{server_url}" -ApiKey "{api_key}" -Silent\r\necho Instalacion completada exitosamente.\r\npause\r\n'
+        z.writestr("instalar_automatico.bat", bat)
+    zip_bytes = zip_buffer.getvalue()
+
+    c_btn1, c_btn2 = st.columns([1, 2])
+    with c_btn1:
+        st.download_button(
+            label="📥 Descargar Paquete (.zip)",
+            data=zip_bytes,
+            file_name="WebBlock-Client.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
+    with c_btn2:
+        zip_link = f"{server_url}/api/client/zip"
+        st.text_input("Enlace directo al ZIP:", value=zip_link, disabled=True)
+
+    st.caption("Comando para descargar e instalar en 1 paso desde PowerShell (Ejecutar como Administrador):")
+    cmd_one_liner = f'powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri \'{server_url}/api/client/zip\' -OutFile \'$env:TEMP\\wb.zip\'; Expand-Archive \'$env:TEMP\\wb.zip\' -DestinationPath \'$env:TEMP\\wb\' -Force; & \'$env:TEMP\\wb\\instalar_automatico.bat\'"'
+    st.code(cmd_one_liner, language="powershell")
+
+st.divider()
 
 # --- Gestión de Bloqueos ---
 st.subheader("🚫 Dominios Bloqueados")
