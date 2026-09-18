@@ -10,7 +10,7 @@ st.title("🛡️ WebBlock Live Monitor")
 
 # --- Paquete de Instalación para Clientes ---
 with st.expander("📦 Despliegue en Terminales Windows (Descargar / Copiar Enlace)", expanded=True):
-    default_url = os.getenv("SERVER_URL", "https://governance-webblockserver.tc5u8q.easypanel.host")
+    default_url = os.getenv("SERVER_URL", "http://localhost:8000")
     col_u, col_k = st.columns([2, 1])
     with col_u:
         server_url = st.text_input("URL del Servidor API (donde reportarán los agentes):", value=default_url).rstrip("/")
