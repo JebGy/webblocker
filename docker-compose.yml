@@ -15,17 +15,14 @@ services:
 
   dashboard:
     build:
-      context: ./dashboard/webblockfront
+      context: ./server
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-        NEXT_PUBLIC_ADMIN_KEY: ${NEXT_PUBLIC_ADMIN_KEY:-wb_admin_secret_2026}
     container_name: webblock_dashboard
     restart: always
+    command: streamlit run dashboard_streamlit.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
     ports:
-      - "${DASHBOARD_PORT:-3001}:3000"
+      - "${DASHBOARD_PORT:-8501}:8501"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      - NEXT_PUBLIC_ADMIN_KEY=${NEXT_PUBLIC_ADMIN_KEY:-wb_admin_secret_2026}
+      - DATABASE_URL=${DATABASE_URL}
     depends_on:
       - server
