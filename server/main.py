@@ -50,6 +50,7 @@ class Device(Base):
     last_ping = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     current_key = Column(String(255), default="")
     pending_key = Column(String(255), nullable=True)
+    version = Column(String(50), default="")
 
     activities = relationship("WebActivity", back_populates="device", cascade="all, delete-orphan")
 
@@ -77,7 +78,7 @@ Base.metadata.create_all(bind=engine)
 
 # Ensure new columns exist on legacy tables without requiring Alembic
 with engine.connect() as _c:
-    for _col in ["current_key", "pending_key"]:
+    for _col in ["current_key", "pending_key", "version"]:
         try:
             _c.exec_driver_sql(f"ALTER TABLE devices ADD COLUMN {_col} VARCHAR(255)")
             _c.commit()
@@ -91,6 +92,7 @@ class HeartbeatRequest(BaseModel):
     brand: Optional[str] = "Unknown"
     last_ip: Optional[str] = ""
     last_ssid: Optional[str] = ""
+    version: Optional[str] = ""
 
 
 class ActivityItem(BaseModel):
@@ -259,6 +261,7 @@ def heartbeat(
             brand=data.brand,
             last_ip=data.last_ip,
             last_ssid=data.last_ssid,
+            version=data.version or "",
             last_ping=now,
             current_key=x_agent_key or "",
         )
@@ -268,6 +271,8 @@ def heartbeat(
         device.last_ip = data.last_ip
         device.last_ssid = data.last_ssid
         device.last_ping = now
+        if data.version:
+            device.version = data.version
         # If the device called with its pending_key, rotation is confirmed!
         if device.pending_key and x_agent_key == device.pending_key:
             device.current_key = device.pending_key

@@ -3,10 +3,10 @@ import io
 import zipfile
 import streamlit as st
 import pandas as pd
-from main import engine, SessionLocal, BlockedDomain, clean_domain_input, AGENT_API_KEY, Device
+from main import engine, SessionLocal, BlockedDomain, clean_domain_input, AGENT_API_KEY, Device, LATEST_AGENT_VERSION
 
 st.set_page_config(page_title="WebBlock Live", layout="wide")
-st.title("🛡️ WebBlock Live Monitor")
+st.title(f"🛡️ WebBlock Live Monitor (Servidor v{LATEST_AGENT_VERSION})")
 
 # --- Paquete de Instalación para Clientes ---
 with st.expander("📦 Despliegue en Terminales Windows (Descargar / Copiar Enlace)", expanded=True):
@@ -109,7 +109,7 @@ st.divider()
 
 # --- Dispositivos y Control de Claves ---
 st.subheader("💻 Dispositivos Conectados y Estado de Claves")
-df_devices = pd.read_sql("SELECT serial_number, brand, last_ip, current_key, pending_key, last_ping FROM devices ORDER BY last_ping DESC LIMIT 50", engine)
+df_devices = pd.read_sql("SELECT serial_number, brand, version, last_ip, current_key, pending_key, last_ping FROM devices ORDER BY last_ping DESC LIMIT 50", engine)
 
 if not df_devices.empty:
     st.dataframe(df_devices, use_container_width=True)

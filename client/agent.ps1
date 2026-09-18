@@ -110,6 +110,7 @@ function Get-HardwareProfile {
         brand         = $brand.Trim()
         last_ip       = $ip
         last_ssid     = $ssid
+        version       = $AgentVersion
     }
 }
 
