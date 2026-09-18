@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 
-# Load .env configuration
+# Load .env configuration (only if not already set by environment)
 _env_path = os.path.join(os.path.dirname(__file__), ".env")
 if os.path.exists(_env_path):
     with open(_env_path, "r", encoding="utf-8") as _f:
@@ -24,7 +24,9 @@ if os.path.exists(_env_path):
             _line = _line.strip()
             if _line and not _line.startswith("#") and "=" in _line:
                 _k, _v = _line.split("=", 1)
-                os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
+                _key = _k.strip()
+                if _key not in os.environ:
+                    os.environ[_key] = _v.strip().strip('"').strip("'")
 
 # Database configuration (overridable with DATABASE_URL environment variable)
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "webblock.db")).replace("\\", "/")
