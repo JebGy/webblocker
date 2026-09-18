@@ -72,10 +72,23 @@ def test_all_endpoints():
         assert res.status_code == 200
         assert res.json()["request_user_info"] is True
 
-        # Next heartbeat should signal prompt_user_info = True
-        res = client.post("/api/heartbeat", headers=AGENT_HEADERS, json={"serial_number": "TEST-SN-1234"})
+        # Next heartbeat (even carrying existing user & DNI) should signal prompt_user_info = True
+        res = client.post("/api/heartbeat", headers=AGENT_HEADERS, json={
+            "serial_number": "TEST-SN-1234",
+            "assigned_user": "Juan Pérez - Operador",
+            "assigned_dni": "71852237"
+        })
         assert res.status_code == 200
         assert res.json()["prompt_user_info"] is True
+
+        # Subsequent heartbeat should NOT prompt again
+        res = client.post("/api/heartbeat", headers=AGENT_HEADERS, json={
+            "serial_number": "TEST-SN-1234",
+            "assigned_user": "Juan Pérez - Operador",
+            "assigned_dni": "71852237"
+        })
+        assert res.status_code == 200
+        assert res.json()["prompt_user_info"] is False
 
         # 5. Manual user & DNI assignment via PUT /api/devices/{id}/user
         res = client.put(f"/api/devices/{device_id}/user", headers=ADMIN_HEADERS, json={

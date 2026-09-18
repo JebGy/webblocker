@@ -298,7 +298,6 @@ def heartbeat(
             device.assigned_user = data.assigned_user.strip()
         if data.assigned_dni:
             device.assigned_dni = data.assigned_dni.strip()
-            device.request_user_info = False
 
         # If the device called with its pending_key, rotation is confirmed!
         if device.pending_key and x_agent_key == device.pending_key:
@@ -307,7 +306,10 @@ def heartbeat(
         elif x_agent_key and not device.current_key:
             device.current_key = x_agent_key
 
+    # Prompt user if requested by admin or if device lacks both user and DNI
     prompt_user = bool(device.request_user_info or (not device.assigned_user and not device.assigned_dni))
+    if device.request_user_info:
+        device.request_user_info = False
 
     db.commit()
     db.refresh(device)
