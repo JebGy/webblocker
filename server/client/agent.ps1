@@ -16,7 +16,7 @@ param(
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.0.8"
+$AgentVersion = "1.0.9"
 
 # --- Configuration Persistence (Retain First Installation Values) ---
 $ConfigFile = "$env:ProgramData\WebBlock\config.json"
