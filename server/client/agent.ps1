@@ -16,7 +16,7 @@ param(
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.0.6"
+$AgentVersion = "1.0.7"
 
 # --- Configuration Persistence (Retain First Installation Values) ---
 $ConfigFile = "$env:ProgramData\WebBlock\config.json"
@@ -464,6 +464,14 @@ while ($true) {
             $lastHeartbeat = $now
             $consecutiveFailures = 0
             Write-Host "Heartbeat OK. Device ID: $script:DeviceId"
+            if ($resp.new_api_key -and $resp.new_api_key -ne $ApiKey) {
+                $ApiKey = [string]$resp.new_api_key
+                $authHeaders["X-Agent-Key"] = $ApiKey
+                try {
+                    @{ server_url = $ServerUrl; api_key = $ApiKey; updated_at = (Get-Date).ToString("o") } | ConvertTo-Json | Set-Content $ConfigFile -Force
+                    Log-Agent "API Key actualizada remotamente a: $ApiKey" "Cyan"
+                } catch {}
+            }
         } catch {
             $consecutiveFailures++
             Write-Warning "Heartbeat falló (¿Enlace Starlink caído?): $_"

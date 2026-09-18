@@ -3,7 +3,7 @@ import io
 import zipfile
 import streamlit as st
 import pandas as pd
-from main import engine, SessionLocal, BlockedDomain, clean_domain_input, AGENT_API_KEY
+from main import engine, SessionLocal, BlockedDomain, clean_domain_input, AGENT_API_KEY, Device
 
 st.set_page_config(page_title="WebBlock Live", layout="wide")
 st.title("🛡️ WebBlock Live Monitor")
@@ -27,6 +27,7 @@ with st.expander("📦 Despliegue en Terminales Windows (Descargar / Copiar Enla
         for fname in ["agent.ps1", "install.ps1", "deploy_silent.bat", "uninstall.ps1"]:
             fpath = os.path.join(client_dir, fname)
             if os.path.exists(fpath):
+                z.write(fpath, arcname=fname)
         bat = (
             "@echo off\r\n"
             "net session >nul 2>&1\r\n"
@@ -106,13 +107,40 @@ else:
 
 st.divider()
 
+# --- Dispositivos y Control de Claves ---
+st.subheader("💻 Dispositivos Conectados y Estado de Claves")
+df_devices = pd.read_sql("SELECT serial_number, brand, last_ip, current_key, pending_key, last_ping FROM devices ORDER BY last_ping DESC LIMIT 50", engine)
+
+if not df_devices.empty:
+    st.dataframe(df_devices, use_container_width=True)
+
+    with st.expander("🔑 Rotación Remota de Claves API", expanded=False):
+        c_sel, c_nkey, c_btn = st.columns([2, 2, 1])
+        with c_sel:
+            dev_options = ["Todos los Equipos"] + list(df_devices["serial_number"].unique())
+            target_dev = st.selectbox("Seleccionar Terminal:", dev_options)
+        with c_nkey:
+            new_key = st.text_input("Nueva API Key a Enviar:", placeholder="ej. wb_agent_2026_faena")
+        with c_btn:
+            st.write("")
+            st.write("")
+            if st.button("🚀 Asignar Clave") and new_key:
+                with SessionLocal() as db:
+                    if target_dev == "Todos los Equipos":
+                        db.query(Device).update({Device.pending_key: new_key.strip()})
+                    else:
+                        db.query(Device).filter(Device.serial_number == target_dev).update({Device.pending_key: new_key.strip()})
+                    db.commit()
+                st.success("Clave programada. El equipo la adoptará en su siguiente heartbeat.")
+                st.rerun()
+else:
+    st.info("Sin dispositivos conectados todavía.")
+
+st.divider()
+
 # --- Telemetría y Métricas ---
 col1, col2 = st.columns(2)
 with col1:
-    st.subheader("Dispositivos")
-    st.dataframe(pd.read_sql("SELECT serial_number, brand, last_ip, last_ssid, last_ping FROM devices ORDER BY last_ping DESC LIMIT 20", engine), use_container_width=True)
-
-with col2:
     st.subheader("Top Dominios")
     top = pd.read_sql("SELECT domain, SUM(duration_seconds) as total_seg FROM web_activity GROUP BY domain ORDER BY total_seg DESC LIMIT 10", engine)
     if not top.empty:
@@ -120,5 +148,6 @@ with col2:
     else:
         st.info("Sin datos de navegación aún.")
 
-st.subheader("Tráfico Reciente en Vivo")
-st.dataframe(pd.read_sql("SELECT logged_at, domain, duration_seconds, device_id FROM web_activity ORDER BY logged_at DESC LIMIT 50", engine), use_container_width=True)
+with col2:
+    st.subheader("Tráfico Reciente en Vivo")
+    st.dataframe(pd.read_sql("SELECT logged_at, domain, duration_seconds, device_id FROM web_activity ORDER BY logged_at DESC LIMIT 50", engine), use_container_width=True)

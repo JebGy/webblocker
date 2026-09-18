@@ -48,6 +48,8 @@ class Device(Base):
     last_ip = Column(String(45), default="")
     last_ssid = Column(String(100), default="")
     last_ping = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    current_key = Column(String(255), default="")
+    pending_key = Column(String(255), nullable=True)
 
     activities = relationship("WebActivity", back_populates="device", cascade="all, delete-orphan")
 
@@ -72,6 +74,15 @@ class WebActivity(Base):
 
 
 Base.metadata.create_all(bind=engine)
+
+# Ensure new columns exist on legacy tables without requiring Alembic
+with engine.connect() as _c:
+    for _col in ["current_key", "pending_key"]:
+        try:
+            _c.exec_driver_sql(f"ALTER TABLE devices ADD COLUMN {_col} VARCHAR(255)")
+            _c.commit()
+        except Exception:
+            pass
 
 
 # --- Schemas ---
@@ -130,9 +141,16 @@ def get_db():
 def verify_agent_or_admin(
     x_agent_key: Optional[str] = Header(None),
     x_admin_key: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
 ):
-    if x_agent_key == AGENT_API_KEY or x_admin_key == ADMIN_API_KEY:
+    if x_admin_key == ADMIN_API_KEY:
         return True
+    if x_agent_key:
+        if x_agent_key == AGENT_API_KEY:
+            return True
+        match = db.query(Device).filter((Device.current_key == x_agent_key) | (Device.pending_key == x_agent_key)).first()
+        if match:
+            return True
     raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing API Key")
 
 
@@ -158,7 +176,7 @@ def verify_admin(x_admin_key: Optional[str] = Header(None)):
     raise HTTPException(status_code=401, detail="Unauthorized: Admin Key required")
 
 
-LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.6")
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.7")
 
 
 # --- Versioning & Auto-Update Endpoints ---
@@ -227,8 +245,12 @@ def download_client_zip(server_url: Optional[str] = None):
 
 # --- Agent Endpoints ---
 @app.post("/api/heartbeat", dependencies=[Depends(verify_agent_or_admin)])
-def heartbeat(data: HeartbeatRequest, db: Session = Depends(get_db)):
-    """Registers or updates device, refreshes last_ping, returns active blocklist."""
+def heartbeat(
+    data: HeartbeatRequest,
+    x_agent_key: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Registers or updates device, tracks reported API key, returns active blocklist and pending new keys."""
     device = db.query(Device).filter(Device.serial_number == data.serial_number).first()
     now = datetime.now(timezone.utc)
     if not device:
@@ -238,6 +260,7 @@ def heartbeat(data: HeartbeatRequest, db: Session = Depends(get_db)):
             last_ip=data.last_ip,
             last_ssid=data.last_ssid,
             last_ping=now,
+            current_key=x_agent_key or "",
         )
         db.add(device)
     else:
@@ -245,13 +268,22 @@ def heartbeat(data: HeartbeatRequest, db: Session = Depends(get_db)):
         device.last_ip = data.last_ip
         device.last_ssid = data.last_ssid
         device.last_ping = now
+        # If the device called with its pending_key, rotation is confirmed!
+        if device.pending_key and x_agent_key == device.pending_key:
+            device.current_key = device.pending_key
+            device.pending_key = None
+        elif x_agent_key and not device.current_key:
+            device.current_key = x_agent_key
 
     db.commit()
     db.refresh(device)
 
     # Active blocked domains included to minimize Starlink round-trips
     blocked = [d.domain for d in db.query(BlockedDomain).filter(BlockedDomain.is_active == True).all()]
-    return {"device_id": device.id, "blocked_domains": blocked}
+    resp = {"device_id": device.id, "blocked_domains": blocked}
+    if device.pending_key:
+        resp["new_api_key"] = device.pending_key
+    return resp
 
 
 @app.get("/api/blocked-domains")
