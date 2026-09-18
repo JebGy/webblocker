@@ -176,7 +176,7 @@ def verify_admin(x_admin_key: Optional[str] = Header(None)):
     raise HTTPException(status_code=401, detail="Unauthorized: Admin Key required")
 
 
-LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.7")
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.8")
 
 
 # --- Versioning & Auto-Update Endpoints ---
