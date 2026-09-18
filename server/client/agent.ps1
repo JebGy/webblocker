@@ -10,6 +10,7 @@ param(
     [string]$ServerUrl = "http://localhost:8000",
     [string]$ApiKey = "wb_agent_secret_2026",
     [string]$AssignedUser = "",
+    [string]$AssignedDni = "",
     [int]$SampleIntervalSeconds = 3,
     [int]$HeartbeatIntervalSeconds = 300,
     [int]$FlushIntervalSeconds = 3,
@@ -17,9 +18,10 @@ param(
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.1.0"
+$AgentVersion = "1.1.1"
 $script:ConfigFile = "$env:ProgramData\WebBlock\config.json"
 $script:AssignedUser = $AssignedUser
+$script:AssignedDni  = $AssignedDni
 
 # --- Configuration Persistence (Retain First Installation Values) ---
 if (Test-Path $script:ConfigFile) {
@@ -34,6 +36,9 @@ if (Test-Path $script:ConfigFile) {
         if ($cfg.assigned_user -and [string]::IsNullOrWhiteSpace($script:AssignedUser)) {
             $script:AssignedUser = $cfg.assigned_user
         }
+        if ($cfg.assigned_dni -and [string]::IsNullOrWhiteSpace($script:AssignedDni)) {
+            $script:AssignedDni = $cfg.assigned_dni
+        }
     } catch {}
 } else {
     try {
@@ -44,23 +49,87 @@ if (Test-Path $script:ConfigFile) {
             server_url    = $ServerUrl
             api_key       = $ApiKey
             assigned_user = $script:AssignedUser
+            assigned_dni  = $script:AssignedDni
             installed_at  = (Get-Date).ToString("o")
         } | ConvertTo-Json | Set-Content -Path $script:ConfigFile -Encoding UTF8 -Force
     } catch {}
 }
 
-function Prompt-AssignedUser([string]$srvName) {
+function Prompt-UserInfo([string]$srvName, [string]$currUser, [string]$currDni) {
     try {
-        Add-Type -AssemblyName Microsoft.VisualBasic
-        $title = "App de monitoreo de $srvName"
-        $promptMsg = "Equipo conectado a: $srvName`n`nPor favor ingrese su nombre o cargo (Usuario de este equipo):"
-        $defaultVal = $env:USERNAME
-        $inputVal = [Microsoft.VisualBasic.Interaction]::InputBox($promptMsg, $title, $defaultVal)
-        if (-not [string]::IsNullOrWhiteSpace($inputVal)) {
-            return $inputVal.Trim()
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = "App de monitoreo de $srvName"
+        $form.Size = New-Object System.Drawing.Size(430, 290)
+        $form.StartPosition = "CenterScreen"
+        $form.FormBorderStyle = "FixedDialog"
+        $form.MaximizeBox = $false
+        $form.MinimizeBox = $false
+        $form.TopMost = $true
+        $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+
+        $lblHeader = New-Object System.Windows.Forms.Label
+        $lblHeader.Text = "Identificación de Terminal - $srvName"
+        $lblHeader.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+        $lblHeader.Location = New-Object System.Drawing.Point(20, 15)
+        $lblHeader.Size = New-Object System.Drawing.Size(370, 22)
+        $form.Controls.Add($lblHeader)
+
+        $lblSub = New-Object System.Windows.Forms.Label
+        $lblSub.Text = "Por favor ingrese su nombre completo y DNI para continuar:"
+        $lblSub.Location = New-Object System.Drawing.Point(20, 40)
+        $lblSub.Size = New-Object System.Drawing.Size(370, 20)
+        $form.Controls.Add($lblSub)
+
+        $lblUser = New-Object System.Windows.Forms.Label
+        $lblUser.Text = "Nombre y Apellidos:"
+        $lblUser.Location = New-Object System.Drawing.Point(20, 70)
+        $lblUser.Size = New-Object System.Drawing.Size(370, 18)
+        $form.Controls.Add($lblUser)
+
+        $txtUser = New-Object System.Windows.Forms.TextBox
+        $txtUser.Text = if ($currUser) { $currUser } else { $env:USERNAME }
+        $txtUser.Location = New-Object System.Drawing.Point(20, 90)
+        $txtUser.Size = New-Object System.Drawing.Size(370, 24)
+        $form.Controls.Add($txtUser)
+
+        $lblDni = New-Object System.Windows.Forms.Label
+        $lblDni.Text = "DNI / Documento de Identidad:"
+        $lblDni.Location = New-Object System.Drawing.Point(20, 125)
+        $lblDni.Size = New-Object System.Drawing.Size(370, 18)
+        $form.Controls.Add($lblDni)
+
+        $txtDni = New-Object System.Windows.Forms.TextBox
+        $txtDni.Text = if ($currDni) { $currDni } else { "" }
+        $txtDni.Location = New-Object System.Drawing.Point(20, 145)
+        $txtDni.Size = New-Object System.Drawing.Size(370, 24)
+        $form.Controls.Add($txtDni)
+
+        $btnOk = New-Object System.Windows.Forms.Button
+        $btnOk.Text = "Guardar Datos"
+        $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $btnOk.Location = New-Object System.Drawing.Point(260, 190)
+        $btnOk.Size = New-Object System.Drawing.Size(130, 32)
+        $btnOk.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $form.AcceptButton = $btnOk
+        $form.Controls.Add($btnOk)
+
+        $res = $form.ShowDialog()
+        if ($res -eq [System.Windows.Forms.DialogResult]::OK) {
+            $n = $txtUser.Text.Trim()
+            $d = $txtDni.Text.Trim()
+            return @{
+                assigned_user = if ($n) { $n } else { $env:USERNAME }
+                assigned_dni  = $d
+            }
         }
     } catch {}
-    return $env:USERNAME
+    return @{
+        assigned_user = if ($currUser) { $currUser } else { $env:USERNAME }
+        assigned_dni  = $currDni
+    }
 }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -132,6 +201,7 @@ function Get-HardwareProfile {
         last_ssid     = $ssid
         version       = $AgentVersion
         assigned_user = $script:AssignedUser
+        assigned_dni  = $script:AssignedDni
     }
 }
 
@@ -429,6 +499,7 @@ function Check-AgentUpdate {
                 api_key       = $ApiKey
                 version       = $remoteVersion
                 assigned_user = $script:AssignedUser
+                assigned_dni  = $script:AssignedDni
                 updated_at    = (Get-Date).ToString("o")
             } | ConvertTo-Json | Set-Content -Path $script:ConfigFile -Encoding UTF8 -Force
         } catch {}
@@ -444,6 +515,7 @@ function Check-AgentUpdate {
             "-ServerUrl", "`"$ServerUrl`"",
             "-ApiKey", "`"$ApiKey`"",
             "-AssignedUser", "`"$script:AssignedUser`"",
+            "-AssignedDni", "`"$script:AssignedDni`"",
             "-SampleIntervalSeconds", "$SampleIntervalSeconds",
             "-HeartbeatIntervalSeconds", "$HeartbeatIntervalSeconds",
             "-FlushIntervalSeconds", "$FlushIntervalSeconds",
@@ -491,24 +563,40 @@ while ($true) {
 
             $srvName = if ($resp.server_name) { [string]$resp.server_name } else { "WebBlock" }
 
-            # Sync remote assigned user or prompt if empty
+            # Sync remote assigned user / dni if changed on server
+            $needSave = $false
             if ($resp.assigned_user -and $resp.assigned_user -ne $script:AssignedUser) {
                 $script:AssignedUser = [string]$resp.assigned_user
+                $needSave = $true
+            }
+            if ($resp.assigned_dni -and $resp.assigned_dni -ne $script:AssignedDni) {
+                $script:AssignedDni = [string]$resp.assigned_dni
+                $needSave = $true
+            }
+
+            if ($needSave) {
                 try {
                     $cfg = if (Test-Path $script:ConfigFile) { Get-Content $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json } else { [PSCustomObject]@{} }
                     $cfg | Add-Member -NotePropertyName "assigned_user" -NotePropertyValue $script:AssignedUser -Force
+                    $cfg | Add-Member -NotePropertyName "assigned_dni" -NotePropertyValue $script:AssignedDni -Force
                     $cfg | ConvertTo-Json | Set-Content $script:ConfigFile -Encoding UTF8 -Force
-                    Log-Agent "Usuario asignado sincronizado desde servidor: $script:AssignedUser" "Cyan"
+                    Log-Agent "Datos de usuario sincronizados desde servidor: $script:AssignedUser (DNI: $script:AssignedDni)" "Cyan"
                 } catch {}
-            } elseif ([string]::IsNullOrWhiteSpace($script:AssignedUser)) {
-                $script:AssignedUser = Prompt-AssignedUser $srvName
+            }
+
+            # Prompt user if requested by server or if neither user nor dni is configured
+            if ($resp.prompt_user_info -or ([string]::IsNullOrWhiteSpace($script:AssignedUser) -and [string]::IsNullOrWhiteSpace($script:AssignedDni))) {
+                $info = Prompt-UserInfo $srvName $script:AssignedUser $script:AssignedDni
+                $script:AssignedUser = $info.assigned_user
+                $script:AssignedDni  = $info.assigned_dni
                 try {
                     $cfg = if (Test-Path $script:ConfigFile) { Get-Content $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json } else { [PSCustomObject]@{} }
                     $cfg | Add-Member -NotePropertyName "assigned_user" -NotePropertyValue $script:AssignedUser -Force
+                    $cfg | Add-Member -NotePropertyName "assigned_dni" -NotePropertyValue $script:AssignedDni -Force
                     $cfg | ConvertTo-Json | Set-Content $script:ConfigFile -Encoding UTF8 -Force
-                    Log-Agent "Usuario configurado por cuadro de dialogo: $script:AssignedUser" "Green"
+                    Log-Agent "Datos registrados por cuadro emergente: $script:AssignedUser (DNI: $script:AssignedDni)" "Green"
                 } catch {}
-                # Invalidate heartbeat to immediately sync the new username to the server
+                # Invalidate heartbeat to immediately sync the new data to the server
                 $lastHeartbeat = [DateTime]::MinValue
             }
 

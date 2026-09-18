@@ -47,14 +47,15 @@ def test_all_endpoints():
         assert res.json()["version"] == LATEST_AGENT_VERSION
         assert res.json()["server_name"] == SERVER_NAME
 
-        # 3. Heartbeat with Agent Key and assigned_user
+        # 3. Heartbeat with Agent Key, assigned_user and assigned_dni
         res = client.post("/api/heartbeat", headers=AGENT_HEADERS, json={
             "serial_number": "TEST-SN-1234",
             "brand": "Dell",
             "last_ip": "192.168.1.50",
             "last_ssid": "Starlink-Camp",
-            "version": "1.1.0",
-            "assigned_user": "Juan Pérez - Operador"
+            "version": "1.1.1",
+            "assigned_user": "Juan Pérez - Operador",
+            "assigned_dni": "71852237"
         })
         assert res.status_code == 200, res.text
         data = res.json()
@@ -63,27 +64,42 @@ def test_all_endpoints():
         assert data["blocked_domains"] == []
         assert data["server_name"] == SERVER_NAME
         assert data["assigned_user"] == "Juan Pérez - Operador"
+        assert data["assigned_dni"] == "71852237"
+        assert data["prompt_user_info"] is False
 
-        # 4. Manual user assignment via PUT /api/devices/{id}/user
+        # 4. Admin triggers remote user info request
+        res = client.post(f"/api/devices/{device_id}/request-info", headers=ADMIN_HEADERS)
+        assert res.status_code == 200
+        assert res.json()["request_user_info"] is True
+
+        # Next heartbeat should signal prompt_user_info = True
+        res = client.post("/api/heartbeat", headers=AGENT_HEADERS, json={"serial_number": "TEST-SN-1234"})
+        assert res.status_code == 200
+        assert res.json()["prompt_user_info"] is True
+
+        # 5. Manual user & DNI assignment via PUT /api/devices/{id}/user
         res = client.put(f"/api/devices/{device_id}/user", headers=ADMIN_HEADERS, json={
-            "assigned_user": "Carlos Gómez - Geología"
+            "assigned_user": "Carlos Gómez - Geología",
+            "assigned_dni": "44556677"
         })
         assert res.status_code == 200
         assert res.json()["assigned_user"] == "Carlos Gómez - Geología"
+        assert res.json()["assigned_dni"] == "44556677"
 
-        # 5. Device list reflects updated user
+        # 6. Device list reflects updated user & DNI
         res = client.get("/api/devices")
         assert res.status_code == 200
         dev_list = res.json()
         target = next((d for d in dev_list if d["serial_number"] == "TEST-SN-1234"), None)
         assert target is not None
         assert target["assigned_user"] == "Carlos Gómez - Geología"
+        assert target["assigned_dni"] == "44556677"
 
-        # 6. Blocked domain creation without admin key -> 401
+        # 7. Blocked domain creation without admin key -> 401
         res = client.post("/api/blocked-domains", json={"domain": "tiktok.com"})
         assert res.status_code == 401
 
-        # 7. Blocked domain creation with admin key -> 200
+        # 8. Blocked domain creation with admin key -> 200
         res = client.post("/api/blocked-domains", headers=ADMIN_HEADERS, json={"domain": "tiktok.com", "added_by": "gerencia"})
         assert res.status_code == 200
         dom_id = res.json()["id"]
@@ -92,11 +108,11 @@ def test_all_endpoints():
         assert res.status_code == 200
         assert "tiktok.com" in res.json()
 
-        # 8. Heartbeat includes blocked domain
+        # 9. Heartbeat includes blocked domain
         res = client.post("/api/heartbeat", headers=AGENT_HEADERS, json={"serial_number": "TEST-SN-1234"})
         assert "tiktok.com" in res.json()["blocked_domains"]
 
-        # 9. Activity batch ingestion with Agent Key
+        # 10. Activity batch ingestion with Agent Key
         res = client.post("/api/activity", headers=AGENT_HEADERS, json={
             "device_id": device_id,
             "activities": [
@@ -107,22 +123,24 @@ def test_all_endpoints():
         assert res.status_code == 200
         assert res.json()["inserted"] == 2
 
-        # 10. Metrics verification
+        # 11. Metrics verification
         res = client.get("/api/metrics/top-domains")
         assert res.status_code == 200
         top = res.json()
         assert len(top) == 2
         assert top[0]["domain"] == "youtube.com"
 
-        # 11. CSV Export verification includes Usuario Asignado
+        # 12. CSV Export verification includes Usuario Asignado and DNI
         res = client.get("/api/metrics/export-csv")
         assert res.status_code == 200
         assert "text/csv" in res.headers["content-type"]
         assert "Usuario Asignado" in res.text
+        assert "DNI" in res.text
         assert "Carlos Gómez - Geología" in res.text
+        assert "44556677" in res.text
         assert "youtube.com" in res.text
 
-        # 12. Admin cleanup endpoint
+        # 13. Admin cleanup endpoint
         res = client.post("/api/admin/cleanup?days=30", headers=ADMIN_HEADERS)
         assert res.status_code == 200
         assert res.json()["status"] == "ok"

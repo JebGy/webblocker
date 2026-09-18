@@ -109,24 +109,48 @@ st.divider()
 
 # --- Dispositivos y Control de Claves ---
 st.subheader("💻 Dispositivos Conectados y Usuarios Asignados")
-df_devices = pd.read_sql("SELECT serial_number, assigned_user, brand, version, last_ip, current_key, pending_key, last_ping FROM devices ORDER BY last_ping DESC LIMIT 50", engine)
+df_devices = pd.read_sql("SELECT serial_number, assigned_user, assigned_dni, brand, version, last_ip, current_key, pending_key, request_user_info, last_ping FROM devices ORDER BY last_ping DESC LIMIT 50", engine)
 
 if not df_devices.empty:
     st.dataframe(df_devices, use_container_width=True)
 
     c_u1, c_u2 = st.columns(2)
     with c_u1:
-        with st.expander("👤 Asignar / Modificar Usuario Responsable", expanded=False):
-            target_u_dev = st.selectbox("Seleccionar Terminal:", df_devices["serial_number"].unique(), key="sel_user_dev")
-            user_val = df_devices.loc[df_devices["serial_number"] == target_u_dev, "assigned_user"].values
-            current_u_val = user_val[0] if len(user_val) > 0 and pd.notna(user_val[0]) else ""
-            new_u_name = st.text_input("Nombre de Usuario / Cargo:", value=current_u_val, placeholder="ej. Juan Pérez - Operaciones Mina", key="txt_user_name")
-            if st.button("💾 Guardar Usuario") and new_u_name:
+        with st.expander("👤 Gestión de Nombre y DNI del Usuario", expanded=False):
+            dev_user_options = ["Todos los Equipos"] + list(df_devices["serial_number"].unique())
+            target_u_dev = st.selectbox("Seleccionar Terminal:", dev_user_options, key="sel_user_dev")
+
+            st.caption("Solicitar remotamente que el usuario ingrese sus datos en la pantalla del equipo:")
+            if st.button("📢 Pedir Nombre y DNI en la Terminal", use_container_width=True):
                 with SessionLocal() as db:
-                    db.query(Device).filter(Device.serial_number == target_u_dev).update({Device.assigned_user: new_u_name.strip()})
+                    if target_u_dev == "Todos los Equipos":
+                        db.query(Device).update({Device.request_user_info: True})
+                    else:
+                        db.query(Device).filter(Device.serial_number == target_u_dev).update({Device.request_user_info: True})
                     db.commit()
-                st.success(f"Usuario '{new_u_name.strip()}' asignado a {target_u_dev}!")
+                st.success(f"¡Solicitud enviada a {target_u_dev}! Se abrirá el cuadro en su pantalla en el próximo reporte.")
                 st.rerun()
+
+            st.write("---")
+            st.caption("O ingresar / modificar datos manualmente desde el servidor:")
+            if target_u_dev != "Todos los Equipos":
+                u_row = df_devices[df_devices["serial_number"] == target_u_dev]
+                curr_user = u_row["assigned_user"].values[0] if not u_row.empty and pd.notna(u_row["assigned_user"].values[0]) else ""
+                curr_dni = u_row["assigned_dni"].values[0] if not u_row.empty and pd.notna(u_row["assigned_dni"].values[0]) else ""
+                new_u_name = st.text_input("Nombre y Apellidos:", value=curr_user, placeholder="ej. Juan Pérez", key="txt_user_name")
+                new_u_dni = st.text_input("DNI / Documento:", value=curr_dni, placeholder="ej. 71852237", key="txt_user_dni")
+                if st.button("💾 Guardar Manualmente", key="btn_save_user"):
+                    with SessionLocal() as db:
+                        db.query(Device).filter(Device.serial_number == target_u_dev).update({
+                            Device.assigned_user: new_u_name.strip(),
+                            Device.assigned_dni: new_u_dni.strip(),
+                            Device.request_user_info: False
+                        })
+                        db.commit()
+                    st.success(f"Datos guardados para {target_u_dev}!")
+                    st.rerun()
+            else:
+                st.info("Selecciona un equipo específico para editar manualmente.")
 
     with c_u2:
         with st.expander("🔑 Rotación Remota de Claves API", expanded=False):

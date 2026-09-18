@@ -54,6 +54,8 @@ class Device(Base):
     pending_key = Column(String(255), nullable=True)
     version = Column(String(50), default="")
     assigned_user = Column(String(100), default="")
+    assigned_dni = Column(String(50), default="")
+    request_user_info = Column(Boolean, default=False)
 
     activities = relationship("WebActivity", back_populates="device", cascade="all, delete-orphan")
 
@@ -82,9 +84,16 @@ Base.metadata.create_all(bind=engine)
 
 # Ensure new columns exist on legacy tables without requiring Alembic
 with engine.connect() as _c:
-    for _col in ["current_key", "pending_key", "version", "assigned_user"]:
+    for _stmt in [
+        "ALTER TABLE devices ADD COLUMN current_key VARCHAR(255)",
+        "ALTER TABLE devices ADD COLUMN pending_key VARCHAR(255)",
+        "ALTER TABLE devices ADD COLUMN version VARCHAR(255)",
+        "ALTER TABLE devices ADD COLUMN assigned_user VARCHAR(255)",
+        "ALTER TABLE devices ADD COLUMN assigned_dni VARCHAR(50)",
+        "ALTER TABLE devices ADD COLUMN request_user_info BOOLEAN DEFAULT FALSE",
+    ]:
         try:
-            _c.exec_driver_sql(f"ALTER TABLE devices ADD COLUMN {_col} VARCHAR(255)")
+            _c.exec_driver_sql(_stmt)
             _c.commit()
         except Exception:
             pass
@@ -98,6 +107,7 @@ class HeartbeatRequest(BaseModel):
     last_ssid: Optional[str] = ""
     version: Optional[str] = ""
     assigned_user: Optional[str] = ""
+    assigned_dni: Optional[str] = ""
 
 
 class ActivityItem(BaseModel):
@@ -184,7 +194,7 @@ def verify_admin(x_admin_key: Optional[str] = Header(None)):
 
 
 SERVER_NAME = os.getenv("SERVER_NAME", os.getenv("ORG_NAME", "WebBlock Enterprise"))
-LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.1.0")
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.1.1")
 
 
 # --- Versioning & Auto-Update Endpoints ---
@@ -270,6 +280,8 @@ def heartbeat(
             last_ssid=data.last_ssid,
             version=data.version or "",
             assigned_user=data.assigned_user or "",
+            assigned_dni=data.assigned_dni or "",
+            request_user_info=False,
             last_ping=now,
             current_key=x_agent_key or "",
         )
@@ -281,14 +293,20 @@ def heartbeat(
         device.last_ping = now
         if data.version:
             device.version = data.version
-        if data.assigned_user and not device.assigned_user:
+        if data.assigned_user:
             device.assigned_user = data.assigned_user.strip()
+        if data.assigned_dni:
+            device.assigned_dni = data.assigned_dni.strip()
+            device.request_user_info = False
+
         # If the device called with its pending_key, rotation is confirmed!
         if device.pending_key and x_agent_key == device.pending_key:
             device.current_key = device.pending_key
             device.pending_key = None
         elif x_agent_key and not device.current_key:
             device.current_key = x_agent_key
+
+    prompt_user = bool(device.request_user_info or (not device.assigned_user and not device.assigned_dni))
 
     db.commit()
     db.refresh(device)
@@ -300,6 +318,8 @@ def heartbeat(
         "blocked_domains": blocked,
         "server_name": SERVER_NAME,
         "assigned_user": device.assigned_user or "",
+        "assigned_dni": device.assigned_dni or "",
+        "prompt_user_info": prompt_user,
     }
     if device.pending_key:
         resp["new_api_key"] = device.pending_key
@@ -354,7 +374,8 @@ def ingest_activity(
 
 
 class AssignUserRequest(BaseModel):
-    assigned_user: str
+    assigned_user: Optional[str] = ""
+    assigned_dni: Optional[str] = ""
 
 
 # --- Dashboard Management Endpoints ---
@@ -371,6 +392,8 @@ def list_devices(db: Session = Depends(get_db)):
             "id": d.id,
             "serial_number": d.serial_number,
             "assigned_user": d.assigned_user or "",
+            "assigned_dni": d.assigned_dni or "",
+            "request_user_info": bool(d.request_user_info),
             "brand": d.brand,
             "version": d.version or "",
             "last_ip": d.last_ip,
@@ -383,16 +406,40 @@ def list_devices(db: Session = Depends(get_db)):
 
 @app.put("/api/devices/{device_id}/user", dependencies=[Depends(verify_admin)])
 def assign_device_user(device_id: str, data: AssignUserRequest, db: Session = Depends(get_db)):
-    """Manually assign or edit the user/operator name of a device."""
-    device = db.query(Device).filter(Device.id == device_id).first()
-    if not device:
-        device = db.query(Device).filter(Device.serial_number == device_id).first()
+    """Manually assign or edit the user/operator name and DNI of a device."""
+    device = db.query(Device).filter((Device.id == device_id) | (Device.serial_number == device_id)).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    device.assigned_user = data.assigned_user.strip()
+    if data.assigned_user is not None:
+        device.assigned_user = data.assigned_user.strip()
+    if data.assigned_dni is not None:
+        device.assigned_dni = data.assigned_dni.strip()
+    device.request_user_info = False
     db.commit()
     db.refresh(device)
-    return {"status": "ok", "device_id": device.id, "serial_number": device.serial_number, "assigned_user": device.assigned_user}
+    return {
+        "status": "ok",
+        "device_id": device.id,
+        "serial_number": device.serial_number,
+        "assigned_user": device.assigned_user,
+        "assigned_dni": device.assigned_dni,
+    }
+
+
+@app.post("/api/devices/{device_id}/request-info", dependencies=[Depends(verify_admin)])
+def trigger_request_user_info(device_id: str, db: Session = Depends(get_db)):
+    """Flags a device so that it opens the Nombre and DNI input form on its screen."""
+    if device_id == "all":
+        count = db.query(Device).update({Device.request_user_info: True})
+        db.commit()
+        return {"status": "ok", "updated_devices": count}
+
+    device = db.query(Device).filter((Device.id == device_id) | (Device.serial_number == device_id)).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    device.request_user_info = True
+    db.commit()
+    return {"status": "ok", "device_id": device.id, "serial_number": device.serial_number, "request_user_info": True}
 
 
 @app.get("/api/blocked-domains/all")
@@ -456,6 +503,7 @@ def export_csv(db: Session = Depends(get_db)):
             WebActivity.logged_at,
             Device.serial_number,
             Device.assigned_user,
+            Device.assigned_dni,
             Device.brand,
             Device.last_ssid,
             WebActivity.domain,
@@ -469,9 +517,9 @@ def export_csv(db: Session = Depends(get_db)):
     output = io.StringIO()
     output.write('\ufeff')  # UTF-8 BOM
     writer = csv.writer(output)
-    writer.writerow(["Fecha y Hora (UTC)", "Serie Equipo", "Usuario Asignado", "Marca", "SSID Starlink", "Dominio Visitado", "Duracion (Segundos)"])
+    writer.writerow(["Fecha y Hora (UTC)", "Serie Equipo", "Usuario Asignado", "DNI", "Marca", "SSID Starlink", "Dominio Visitado", "Duracion (Segundos)"])
     for r in rows:
-        writer.writerow([r[0].isoformat() if r[0] else "", r[1], r[2] or "Sin Asignar", r[3], r[4], r[5], r[6]])
+        writer.writerow([r[0].isoformat() if r[0] else "", r[1], r[2] or "Sin Asignar", r[3] or "-", r[4], r[5], r[6], r[7]])
 
     return Response(
         content=output.getvalue(),

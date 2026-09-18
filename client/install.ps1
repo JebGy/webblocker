@@ -3,6 +3,7 @@ param(
     [string]$ServerUrl = "http://localhost:8000",
     [string]$ApiKey = "wb_agent_secret_2026",
     [string]$AssignedUser = "",
+    [string]$AssignedDni = "",
     [switch]$Silent
 )
 
@@ -26,6 +27,7 @@ if (Test-Path $ConfigFile) {
         if ($cfg.server_url -and ($ServerUrl -eq "http://localhost:8000" -or -not $PSBoundParameters.ContainsKey('ServerUrl'))) { $ServerUrl = $cfg.server_url }
         if ($cfg.api_key -and ($ApiKey -eq "wb_agent_secret_2026" -or -not $PSBoundParameters.ContainsKey('ApiKey'))) { $ApiKey = $cfg.api_key }
         if ($cfg.assigned_user -and -not $PSBoundParameters.ContainsKey('AssignedUser')) { $AssignedUser = $cfg.assigned_user }
+        if ($cfg.assigned_dni -and -not $PSBoundParameters.ContainsKey('AssignedDni')) { $AssignedDni = $cfg.assigned_dni }
     } catch {}
 }
 
@@ -182,6 +184,7 @@ if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir
     server_url    = $ServerUrl
     api_key       = $ApiKey
     assigned_user = $AssignedUser
+    assigned_dni  = $AssignedDni
     installed_at  = (Get-Date).ToString("o")
 } | ConvertTo-Json | Set-Content -Path "$ConfigDir\config.json" -Encoding UTF8 -Force
 
