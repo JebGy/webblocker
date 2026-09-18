@@ -53,7 +53,7 @@ def test_all_endpoints():
             "brand": "Dell",
             "last_ip": "192.168.1.50",
             "last_ssid": "Starlink-Camp",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "assigned_user": "Juan Pérez - Operador",
             "assigned_dni": "71852237"
         })

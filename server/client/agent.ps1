@@ -12,13 +12,13 @@ param(
     [string]$AssignedUser = "",
     [string]$AssignedDni = "",
     [int]$SampleIntervalSeconds = 3,
-    [int]$HeartbeatIntervalSeconds = 300,
+    [int]$HeartbeatIntervalSeconds = 10,
     [int]$FlushIntervalSeconds = 3,
     [int]$SyncBlocklistIntervalSeconds = 10,
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.1.1"
+$AgentVersion = "1.1.2"
 $script:ConfigFile = "$env:ProgramData\WebBlock\config.json"
 $script:AssignedUser = $AssignedUser
 $script:AssignedDni  = $AssignedDni
@@ -507,6 +507,7 @@ function Check-AgentUpdate {
         Log-Agent "[AutoUpdate] Actualizacion a v$remoteVersion completada con exito. Reiniciando agente..." "Green"
 
         # Relanzar nuevo proceso con los mismos parametros
+        $hbInterval = if ($HeartbeatIntervalSeconds -gt 15) { 10 } else { $HeartbeatIntervalSeconds }
         $argList = @(
             "-ExecutionPolicy", "Bypass",
             "-NoProfile",
@@ -517,7 +518,7 @@ function Check-AgentUpdate {
             "-AssignedUser", "`"$script:AssignedUser`"",
             "-AssignedDni", "`"$script:AssignedDni`"",
             "-SampleIntervalSeconds", "$SampleIntervalSeconds",
-            "-HeartbeatIntervalSeconds", "$HeartbeatIntervalSeconds",
+            "-HeartbeatIntervalSeconds", "$hbInterval",
             "-FlushIntervalSeconds", "$FlushIntervalSeconds",
             "-SyncBlocklistIntervalSeconds", "$SyncBlocklistIntervalSeconds",
             "-UpdateCheckIntervalSeconds", "$UpdateCheckIntervalSeconds"

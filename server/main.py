@@ -91,6 +91,7 @@ with engine.connect() as _c:
         "ALTER TABLE devices ADD COLUMN assigned_user VARCHAR(255)",
         "ALTER TABLE devices ADD COLUMN assigned_dni VARCHAR(50)",
         "ALTER TABLE devices ADD COLUMN request_user_info BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE blocked_domains ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     ]:
         try:
             _c.exec_driver_sql(_stmt)
@@ -194,7 +195,7 @@ def verify_admin(x_admin_key: Optional[str] = Header(None)):
 
 
 SERVER_NAME = os.getenv("SERVER_NAME", os.getenv("ORG_NAME", "WebBlock Enterprise"))
-LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.1.1")
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.1.2")
 
 
 # --- Versioning & Auto-Update Endpoints ---
