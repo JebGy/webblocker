@@ -2,6 +2,7 @@
 param(
     [string]$ServerUrl = "http://localhost:8000",
     [string]$ApiKey = "wb_agent_secret_2026",
+    [string]$AssignedUser = "",
     [switch]$Silent
 )
 
@@ -24,6 +25,7 @@ if (Test-Path $ConfigFile) {
         $cfg = Get-Content $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($cfg.server_url -and ($ServerUrl -eq "http://localhost:8000" -or -not $PSBoundParameters.ContainsKey('ServerUrl'))) { $ServerUrl = $cfg.server_url }
         if ($cfg.api_key -and ($ApiKey -eq "wb_agent_secret_2026" -or -not $PSBoundParameters.ContainsKey('ApiKey'))) { $ApiKey = $cfg.api_key }
+        if ($cfg.assigned_user -and -not $PSBoundParameters.ContainsKey('AssignedUser')) { $AssignedUser = $cfg.assigned_user }
     } catch {}
 }
 
@@ -177,9 +179,10 @@ Copy-Item -Path "$PSScriptRoot\agent.ps1" -Destination $TargetScript -Force
 $ConfigDir = "$env:ProgramData\WebBlock"
 if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null }
 @{
-    server_url   = $ServerUrl
-    api_key      = $ApiKey
-    installed_at = (Get-Date).ToString("o")
+    server_url    = $ServerUrl
+    api_key       = $ApiKey
+    assigned_user = $AssignedUser
+    installed_at  = (Get-Date).ToString("o")
 } | ConvertTo-Json | Set-Content -Path "$ConfigDir\config.json" -Encoding UTF8 -Force
 
 # 4. Anti-Tamper: Restringir permisos NTFS (Solo Administradores pueden editar o borrar)

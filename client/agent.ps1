@@ -9,6 +9,7 @@
 param(
     [string]$ServerUrl = "http://localhost:8000",
     [string]$ApiKey = "wb_agent_secret_2026",
+    [string]$AssignedUser = "",
     [int]$SampleIntervalSeconds = 3,
     [int]$HeartbeatIntervalSeconds = 300,
     [int]$FlushIntervalSeconds = 3,
@@ -16,31 +17,50 @@ param(
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.0.9"
+$AgentVersion = "1.1.0"
+$script:ConfigFile = "$env:ProgramData\WebBlock\config.json"
+$script:AssignedUser = $AssignedUser
 
 # --- Configuration Persistence (Retain First Installation Values) ---
-$ConfigFile = "$env:ProgramData\WebBlock\config.json"
-if (Test-Path $ConfigFile) {
+if (Test-Path $script:ConfigFile) {
     try {
-        $cfg = Get-Content $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $cfg = Get-Content $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($cfg.server_url -and ($ServerUrl -eq "http://localhost:8000" -or -not $PSBoundParameters.ContainsKey('ServerUrl'))) {
             $ServerUrl = $cfg.server_url
         }
         if ($cfg.api_key -and ($ApiKey -eq "wb_agent_secret_2026" -or -not $PSBoundParameters.ContainsKey('ApiKey'))) {
             $ApiKey = $cfg.api_key
         }
+        if ($cfg.assigned_user -and [string]::IsNullOrWhiteSpace($script:AssignedUser)) {
+            $script:AssignedUser = $cfg.assigned_user
+        }
     } catch {}
 } else {
     try {
-        if (-not (Test-Path (Split-Path $ConfigFile))) {
-            New-Item -ItemType Directory -Path (Split-Path $ConfigFile) -Force | Out-Null
+        if (-not (Test-Path (Split-Path $script:ConfigFile))) {
+            New-Item -ItemType Directory -Path (Split-Path $script:ConfigFile) -Force | Out-Null
         }
         @{
-            server_url   = $ServerUrl
-            api_key      = $ApiKey
-            installed_at = (Get-Date).ToString("o")
-        } | ConvertTo-Json | Set-Content -Path $ConfigFile -Encoding UTF8 -Force
+            server_url    = $ServerUrl
+            api_key       = $ApiKey
+            assigned_user = $script:AssignedUser
+            installed_at  = (Get-Date).ToString("o")
+        } | ConvertTo-Json | Set-Content -Path $script:ConfigFile -Encoding UTF8 -Force
     } catch {}
+}
+
+function Prompt-AssignedUser([string]$srvName) {
+    try {
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $title = "App de monitoreo de $srvName"
+        $promptMsg = "Equipo conectado a: $srvName`n`nPor favor ingrese su nombre o cargo (Usuario de este equipo):"
+        $defaultVal = $env:USERNAME
+        $inputVal = [Microsoft.VisualBasic.Interaction]::InputBox($promptMsg, $title, $defaultVal)
+        if (-not [string]::IsNullOrWhiteSpace($inputVal)) {
+            return $inputVal.Trim()
+        }
+    } catch {}
+    return $env:USERNAME
 }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -111,6 +131,7 @@ function Get-HardwareProfile {
         last_ip       = $ip
         last_ssid     = $ssid
         version       = $AgentVersion
+        assigned_user = $script:AssignedUser
     }
 }
 
@@ -404,10 +425,11 @@ function Check-AgentUpdate {
         # Actualizar metadata persistente conservando ServerUrl y ApiKey originales
         try {
             @{
-                server_url   = $ServerUrl
-                api_key      = $ApiKey
-                version      = $remoteVersion
-                updated_at   = (Get-Date).ToString("o")
+                server_url    = $ServerUrl
+                api_key       = $ApiKey
+                version       = $remoteVersion
+                assigned_user = $script:AssignedUser
+                updated_at    = (Get-Date).ToString("o")
             } | ConvertTo-Json | Set-Content -Path $script:ConfigFile -Encoding UTF8 -Force
         } catch {}
 
@@ -421,6 +443,7 @@ function Check-AgentUpdate {
             "-File", "`"$targetPath`"",
             "-ServerUrl", "`"$ServerUrl`"",
             "-ApiKey", "`"$ApiKey`"",
+            "-AssignedUser", "`"$script:AssignedUser`"",
             "-SampleIntervalSeconds", "$SampleIntervalSeconds",
             "-HeartbeatIntervalSeconds", "$HeartbeatIntervalSeconds",
             "-FlushIntervalSeconds", "$FlushIntervalSeconds",
@@ -465,11 +488,38 @@ while ($true) {
             $lastHeartbeat = $now
             $consecutiveFailures = 0
             Write-Host "Heartbeat OK. Device ID: $script:DeviceId"
+
+            $srvName = if ($resp.server_name) { [string]$resp.server_name } else { "WebBlock" }
+
+            # Sync remote assigned user or prompt if empty
+            if ($resp.assigned_user -and $resp.assigned_user -ne $script:AssignedUser) {
+                $script:AssignedUser = [string]$resp.assigned_user
+                try {
+                    $cfg = if (Test-Path $script:ConfigFile) { Get-Content $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json } else { [PSCustomObject]@{} }
+                    $cfg | Add-Member -NotePropertyName "assigned_user" -NotePropertyValue $script:AssignedUser -Force
+                    $cfg | ConvertTo-Json | Set-Content $script:ConfigFile -Encoding UTF8 -Force
+                    Log-Agent "Usuario asignado sincronizado desde servidor: $script:AssignedUser" "Cyan"
+                } catch {}
+            } elseif ([string]::IsNullOrWhiteSpace($script:AssignedUser)) {
+                $script:AssignedUser = Prompt-AssignedUser $srvName
+                try {
+                    $cfg = if (Test-Path $script:ConfigFile) { Get-Content $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json } else { [PSCustomObject]@{} }
+                    $cfg | Add-Member -NotePropertyName "assigned_user" -NotePropertyValue $script:AssignedUser -Force
+                    $cfg | ConvertTo-Json | Set-Content $script:ConfigFile -Encoding UTF8 -Force
+                    Log-Agent "Usuario configurado por cuadro de dialogo: $script:AssignedUser" "Green"
+                } catch {}
+                # Invalidate heartbeat to immediately sync the new username to the server
+                $lastHeartbeat = [DateTime]::MinValue
+            }
+
             if ($resp.new_api_key -and $resp.new_api_key -ne $ApiKey) {
                 $ApiKey = [string]$resp.new_api_key
                 $authHeaders["X-Agent-Key"] = $ApiKey
                 try {
-                    @{ server_url = $ServerUrl; api_key = $ApiKey; updated_at = (Get-Date).ToString("o") } | ConvertTo-Json | Set-Content $ConfigFile -Force
+                    $cfg = if (Test-Path $script:ConfigFile) { Get-Content $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json } else { [PSCustomObject]@{} }
+                    $cfg | Add-Member -NotePropertyName "api_key" -NotePropertyValue $ApiKey -Force
+                    $cfg | Add-Member -NotePropertyName "updated_at" -NotePropertyValue (Get-Date).ToString("o") -Force
+                    $cfg | ConvertTo-Json | Set-Content $script:ConfigFile -Force
                     Log-Agent "API Key actualizada remotamente a: $ApiKey" "Cyan"
                 } catch {}
                 $lastHeartbeat = [DateTime]::MinValue

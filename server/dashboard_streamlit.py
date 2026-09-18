@@ -3,10 +3,10 @@ import io
 import zipfile
 import streamlit as st
 import pandas as pd
-from main import engine, SessionLocal, BlockedDomain, clean_domain_input, AGENT_API_KEY, Device, LATEST_AGENT_VERSION
+from main import engine, SessionLocal, BlockedDomain, clean_domain_input, AGENT_API_KEY, Device, LATEST_AGENT_VERSION, SERVER_NAME
 
-st.set_page_config(page_title="WebBlock Live", layout="wide")
-st.title(f"🛡️ WebBlock Live Monitor (Servidor v{LATEST_AGENT_VERSION})")
+st.set_page_config(page_title=f"{SERVER_NAME} Monitor", layout="wide")
+st.title(f"🛡️ {SERVER_NAME} Live Monitor (Servidor v{LATEST_AGENT_VERSION})")
 
 # --- Paquete de Instalación para Clientes ---
 with st.expander("📦 Despliegue en Terminales Windows (Descargar / Copiar Enlace)", expanded=True):
@@ -108,22 +108,31 @@ else:
 st.divider()
 
 # --- Dispositivos y Control de Claves ---
-st.subheader("💻 Dispositivos Conectados y Estado de Claves")
-df_devices = pd.read_sql("SELECT serial_number, brand, version, last_ip, current_key, pending_key, last_ping FROM devices ORDER BY last_ping DESC LIMIT 50", engine)
+st.subheader("💻 Dispositivos Conectados y Usuarios Asignados")
+df_devices = pd.read_sql("SELECT serial_number, assigned_user, brand, version, last_ip, current_key, pending_key, last_ping FROM devices ORDER BY last_ping DESC LIMIT 50", engine)
 
 if not df_devices.empty:
     st.dataframe(df_devices, use_container_width=True)
 
-    with st.expander("🔑 Rotación Remota de Claves API", expanded=False):
-        c_sel, c_nkey, c_btn = st.columns([2, 2, 1])
-        with c_sel:
+    c_u1, c_u2 = st.columns(2)
+    with c_u1:
+        with st.expander("👤 Asignar / Modificar Usuario Responsable", expanded=False):
+            target_u_dev = st.selectbox("Seleccionar Terminal:", df_devices["serial_number"].unique(), key="sel_user_dev")
+            user_val = df_devices.loc[df_devices["serial_number"] == target_u_dev, "assigned_user"].values
+            current_u_val = user_val[0] if len(user_val) > 0 and pd.notna(user_val[0]) else ""
+            new_u_name = st.text_input("Nombre de Usuario / Cargo:", value=current_u_val, placeholder="ej. Juan Pérez - Operaciones Mina", key="txt_user_name")
+            if st.button("💾 Guardar Usuario") and new_u_name:
+                with SessionLocal() as db:
+                    db.query(Device).filter(Device.serial_number == target_u_dev).update({Device.assigned_user: new_u_name.strip()})
+                    db.commit()
+                st.success(f"Usuario '{new_u_name.strip()}' asignado a {target_u_dev}!")
+                st.rerun()
+
+    with c_u2:
+        with st.expander("🔑 Rotación Remota de Claves API", expanded=False):
             dev_options = ["Todos los Equipos"] + list(df_devices["serial_number"].unique())
-            target_dev = st.selectbox("Seleccionar Terminal:", dev_options)
-        with c_nkey:
-            new_key = st.text_input("Nueva API Key a Enviar:", placeholder="ej. wb_agent_2026_faena")
-        with c_btn:
-            st.write("")
-            st.write("")
+            target_dev = st.selectbox("Seleccionar Terminal:", dev_options, key="sel_key_dev")
+            new_key = st.text_input("Nueva API Key a Enviar:", placeholder="ej. wb_agent_2026_faena", key="txt_new_key")
             if st.button("🚀 Asignar Clave") and new_key:
                 with SessionLocal() as db:
                     if target_dev == "Todos los Equipos":

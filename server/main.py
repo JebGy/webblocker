@@ -53,6 +53,7 @@ class Device(Base):
     current_key = Column(String(255), default="")
     pending_key = Column(String(255), nullable=True)
     version = Column(String(50), default="")
+    assigned_user = Column(String(100), default="")
 
     activities = relationship("WebActivity", back_populates="device", cascade="all, delete-orphan")
 
@@ -61,8 +62,9 @@ class BlockedDomain(Base):
     __tablename__ = "blocked_domains"
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     domain = Column(String(255), unique=True, index=True, nullable=False)
-    is_active = Column(Boolean, default=True)
     added_by = Column(String(100), default="admin")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class WebActivity(Base):
@@ -80,7 +82,7 @@ Base.metadata.create_all(bind=engine)
 
 # Ensure new columns exist on legacy tables without requiring Alembic
 with engine.connect() as _c:
-    for _col in ["current_key", "pending_key", "version"]:
+    for _col in ["current_key", "pending_key", "version", "assigned_user"]:
         try:
             _c.exec_driver_sql(f"ALTER TABLE devices ADD COLUMN {_col} VARCHAR(255)")
             _c.commit()
@@ -95,6 +97,7 @@ class HeartbeatRequest(BaseModel):
     last_ip: Optional[str] = ""
     last_ssid: Optional[str] = ""
     version: Optional[str] = ""
+    assigned_user: Optional[str] = ""
 
 
 class ActivityItem(BaseModel):
@@ -180,16 +183,18 @@ def verify_admin(x_admin_key: Optional[str] = Header(None)):
     raise HTTPException(status_code=401, detail="Unauthorized: Admin Key required")
 
 
-LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.9")
+SERVER_NAME = os.getenv("SERVER_NAME", os.getenv("ORG_NAME", "WebBlock Enterprise"))
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.1.0")
 
 
 # --- Versioning & Auto-Update Endpoints ---
 @app.get("/api/agent/version")
 def get_agent_version(_: bool = Depends(verify_agent_or_admin)):
-    """Returns the latest agent version and download path."""
+    """Returns the latest agent version, download path, and server name."""
     return {
         "version": LATEST_AGENT_VERSION,
-        "download_url": "/api/agent/download"
+        "download_url": "/api/agent/download",
+        "server_name": SERVER_NAME,
     }
 
 
@@ -264,6 +269,7 @@ def heartbeat(
             last_ip=data.last_ip,
             last_ssid=data.last_ssid,
             version=data.version or "",
+            assigned_user=data.assigned_user or "",
             last_ping=now,
             current_key=x_agent_key or "",
         )
@@ -275,6 +281,8 @@ def heartbeat(
         device.last_ping = now
         if data.version:
             device.version = data.version
+        if data.assigned_user and not device.assigned_user:
+            device.assigned_user = data.assigned_user.strip()
         # If the device called with its pending_key, rotation is confirmed!
         if device.pending_key and x_agent_key == device.pending_key:
             device.current_key = device.pending_key
@@ -287,7 +295,12 @@ def heartbeat(
 
     # Active blocked domains included to minimize Starlink round-trips
     blocked = [d.domain for d in db.query(BlockedDomain).filter(BlockedDomain.is_active == True).all()]
-    resp = {"device_id": device.id, "blocked_domains": blocked}
+    resp = {
+        "device_id": device.id,
+        "blocked_domains": blocked,
+        "server_name": SERVER_NAME,
+        "assigned_user": device.assigned_user or "",
+    }
     if device.pending_key:
         resp["new_api_key"] = device.pending_key
     return resp
@@ -340,6 +353,10 @@ def ingest_activity(
     return {"status": "ok", "inserted": len(records)}
 
 
+class AssignUserRequest(BaseModel):
+    assigned_user: str
+
+
 # --- Dashboard Management Endpoints ---
 @app.get("/api/devices")
 def list_devices(db: Session = Depends(get_db)):
@@ -353,13 +370,29 @@ def list_devices(db: Session = Depends(get_db)):
         result.append({
             "id": d.id,
             "serial_number": d.serial_number,
+            "assigned_user": d.assigned_user or "",
             "brand": d.brand,
+            "version": d.version or "",
             "last_ip": d.last_ip,
             "last_ssid": d.last_ssid,
             "last_ping": d.last_ping.isoformat(),
             "is_online": is_online,
         })
     return result
+
+
+@app.put("/api/devices/{device_id}/user", dependencies=[Depends(verify_admin)])
+def assign_device_user(device_id: str, data: AssignUserRequest, db: Session = Depends(get_db)):
+    """Manually assign or edit the user/operator name of a device."""
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        device = db.query(Device).filter(Device.serial_number == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    device.assigned_user = data.assigned_user.strip()
+    db.commit()
+    db.refresh(device)
+    return {"status": "ok", "device_id": device.id, "serial_number": device.serial_number, "assigned_user": device.assigned_user}
 
 
 @app.get("/api/blocked-domains/all")
@@ -422,6 +455,7 @@ def export_csv(db: Session = Depends(get_db)):
         db.query(
             WebActivity.logged_at,
             Device.serial_number,
+            Device.assigned_user,
             Device.brand,
             Device.last_ssid,
             WebActivity.domain,
@@ -435,9 +469,9 @@ def export_csv(db: Session = Depends(get_db)):
     output = io.StringIO()
     output.write('\ufeff')  # UTF-8 BOM
     writer = csv.writer(output)
-    writer.writerow(["Fecha y Hora (UTC)", "Serie Equipo", "Marca", "SSID Starlink", "Dominio Visitado", "Duracion (Segundos)"])
+    writer.writerow(["Fecha y Hora (UTC)", "Serie Equipo", "Usuario Asignado", "Marca", "SSID Starlink", "Dominio Visitado", "Duracion (Segundos)"])
     for r in rows:
-        writer.writerow([r[0].isoformat() if r[0] else "", r[1], r[2], r[3], r[4], r[5]])
+        writer.writerow([r[0].isoformat() if r[0] else "", r[1], r[2] or "Sin Asignar", r[3], r[4], r[5], r[6]])
 
     return Response(
         content=output.getvalue(),
