@@ -195,7 +195,7 @@ def verify_admin(x_admin_key: Optional[str] = Header(None)):
 
 
 SERVER_NAME = os.getenv("SERVER_NAME", os.getenv("ORG_NAME", "WebBlock Enterprise"))
-LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.1.2")
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.1.3")
 
 
 # --- Versioning & Auto-Update Endpoints ---

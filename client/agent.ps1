@@ -18,7 +18,7 @@ param(
     [int]$UpdateCheckIntervalSeconds = 20
 )
 
-$AgentVersion = "1.1.2"
+$AgentVersion = "1.1.3"
 $script:ConfigFile = "$env:ProgramData\WebBlock\config.json"
 $script:AssignedUser = $AssignedUser
 $script:AssignedDni  = $AssignedDni
@@ -56,76 +56,83 @@ if (Test-Path $script:ConfigFile) {
 }
 
 function Prompt-UserInfo([string]$srvName, [string]$currUser, [string]$currDni) {
-    try {
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
+    # Spawn a visible subprocess to show the WinForms dialog.
+    # This bypasses the -WindowStyle Hidden restriction of the main agent process.
+    $tmpFile = [System.IO.Path]::GetTempFileName() + ".json"
+    $safeUser = $currUser -replace '"', '`"'
+    $safeDni  = $currDni  -replace '"', '`"'
+    $script = @"
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+`$form = New-Object System.Windows.Forms.Form
+`$form.Text = 'App de monitoreo de $srvName'
+`$form.Size = New-Object System.Drawing.Size(430, 290)
+`$form.StartPosition = 'CenterScreen'
+`$form.FormBorderStyle = 'FixedDialog'
+`$form.MaximizeBox = `$false; `$form.MinimizeBox = `$false
+`$form.TopMost = `$true
+`$form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
-        $form = New-Object System.Windows.Forms.Form
-        $form.Text = "App de monitoreo de $srvName"
-        $form.Size = New-Object System.Drawing.Size(430, 290)
-        $form.StartPosition = "CenterScreen"
-        $form.FormBorderStyle = "FixedDialog"
-        $form.MaximizeBox = $false
-        $form.MinimizeBox = $false
-        $form.TopMost = $true
-        $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+`$lh = New-Object System.Windows.Forms.Label
+`$lh.Text = 'Identificacion de Terminal - $srvName'
+`$lh.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+`$lh.Location = New-Object System.Drawing.Point(20,15); `$lh.Size = New-Object System.Drawing.Size(370,22)
+`$form.Controls.Add(`$lh)
 
-        $lblHeader = New-Object System.Windows.Forms.Label
-        $lblHeader.Text = "Identificación de Terminal - $srvName"
-        $lblHeader.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-        $lblHeader.Location = New-Object System.Drawing.Point(20, 15)
-        $lblHeader.Size = New-Object System.Drawing.Size(370, 22)
-        $form.Controls.Add($lblHeader)
+`$ls = New-Object System.Windows.Forms.Label
+`$ls.Text = 'Por favor ingrese su nombre completo y DNI para continuar:'
+`$ls.Location = New-Object System.Drawing.Point(20,40); `$ls.Size = New-Object System.Drawing.Size(370,20)
+`$form.Controls.Add(`$ls)
 
-        $lblSub = New-Object System.Windows.Forms.Label
-        $lblSub.Text = "Por favor ingrese su nombre completo y DNI para continuar:"
-        $lblSub.Location = New-Object System.Drawing.Point(20, 40)
-        $lblSub.Size = New-Object System.Drawing.Size(370, 20)
-        $form.Controls.Add($lblSub)
+`$lu = New-Object System.Windows.Forms.Label
+`$lu.Text = 'Nombre y Apellidos:'
+`$lu.Location = New-Object System.Drawing.Point(20,70); `$lu.Size = New-Object System.Drawing.Size(370,18)
+`$form.Controls.Add(`$lu)
 
-        $lblUser = New-Object System.Windows.Forms.Label
-        $lblUser.Text = "Nombre y Apellidos:"
-        $lblUser.Location = New-Object System.Drawing.Point(20, 70)
-        $lblUser.Size = New-Object System.Drawing.Size(370, 18)
-        $form.Controls.Add($lblUser)
+`$txU = New-Object System.Windows.Forms.TextBox
+`$txU.Text = '$safeUser'
+`$txU.Location = New-Object System.Drawing.Point(20,90); `$txU.Size = New-Object System.Drawing.Size(370,24)
+`$form.Controls.Add(`$txU)
 
-        $txtUser = New-Object System.Windows.Forms.TextBox
-        $txtUser.Text = if ($currUser) { $currUser } else { $env:USERNAME }
-        $txtUser.Location = New-Object System.Drawing.Point(20, 90)
-        $txtUser.Size = New-Object System.Drawing.Size(370, 24)
-        $form.Controls.Add($txtUser)
+`$ld = New-Object System.Windows.Forms.Label
+`$ld.Text = 'DNI / Documento de Identidad:'
+`$ld.Location = New-Object System.Drawing.Point(20,125); `$ld.Size = New-Object System.Drawing.Size(370,18)
+`$form.Controls.Add(`$ld)
 
-        $lblDni = New-Object System.Windows.Forms.Label
-        $lblDni.Text = "DNI / Documento de Identidad:"
-        $lblDni.Location = New-Object System.Drawing.Point(20, 125)
-        $lblDni.Size = New-Object System.Drawing.Size(370, 18)
-        $form.Controls.Add($lblDni)
+`$txD = New-Object System.Windows.Forms.TextBox
+`$txD.Text = '$safeDni'
+`$txD.Location = New-Object System.Drawing.Point(20,145); `$txD.Size = New-Object System.Drawing.Size(370,24)
+`$form.Controls.Add(`$txD)
 
-        $txtDni = New-Object System.Windows.Forms.TextBox
-        $txtDni.Text = if ($currDni) { $currDni } else { "" }
-        $txtDni.Location = New-Object System.Drawing.Point(20, 145)
-        $txtDni.Size = New-Object System.Drawing.Size(370, 24)
-        $form.Controls.Add($txtDni)
+`$btn = New-Object System.Windows.Forms.Button
+`$btn.Text = 'Guardar Datos'
+`$btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
+`$btn.Location = New-Object System.Drawing.Point(260,190); `$btn.Size = New-Object System.Drawing.Size(130,32)
+`$form.AcceptButton = `$btn; `$form.Controls.Add(`$btn)
 
-        $btnOk = New-Object System.Windows.Forms.Button
-        $btnOk.Text = "Guardar Datos"
-        $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
-        $btnOk.Location = New-Object System.Drawing.Point(260, 190)
-        $btnOk.Size = New-Object System.Drawing.Size(130, 32)
-        $btnOk.Cursor = [System.Windows.Forms.Cursors]::Hand
-        $form.AcceptButton = $btnOk
-        $form.Controls.Add($btnOk)
+`$r = `$form.ShowDialog()
+if (`$r -eq [System.Windows.Forms.DialogResult]::OK) {
+    @{ assigned_user = `$txU.Text.Trim(); assigned_dni = `$txD.Text.Trim() } | ConvertTo-Json | Set-Content -Path '$tmpFile' -Encoding UTF8
+}
+"@
+    $encodedScript = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script))
+    $proc = Start-Process -FilePath "powershell.exe" `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedScript" `
+        -PassThru -WindowStyle Normal
+    $proc.WaitForExit(60000)  # Wait up to 60 seconds for user input
 
-        $res = $form.ShowDialog()
-        if ($res -eq [System.Windows.Forms.DialogResult]::OK) {
-            $n = $txtUser.Text.Trim()
-            $d = $txtDni.Text.Trim()
-            return @{
-                assigned_user = if ($n) { $n } else { $env:USERNAME }
-                assigned_dni  = $d
+    if (Test-Path $tmpFile) {
+        try {
+            $data = Get-Content $tmpFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
+            if ($data.assigned_user) {
+                return @{
+                    assigned_user = $data.assigned_user
+                    assigned_dni  = $data.assigned_dni
+                }
             }
-        }
-    } catch {}
+        } catch {}
+        Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
+    }
     return @{
         assigned_user = if ($currUser) { $currUser } else { $env:USERNAME }
         assigned_dni  = $currDni

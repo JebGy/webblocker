@@ -215,7 +215,7 @@ foreach ($pol in $Policies) {
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 
-$Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$TargetScript`" -ServerUrl `"$ServerUrl`" -ApiKey `"$ApiKey`""
+$Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$TargetScript`" -ServerUrl `"$ServerUrl`" -ApiKey `"$ApiKey`" -HeartbeatIntervalSeconds 10"
 $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $Arguments
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
 
