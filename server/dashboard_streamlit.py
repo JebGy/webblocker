@@ -1,12 +1,8 @@
-import os
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine
+from main import engine
 
 st.set_page_config(page_title="WebBlock Live", layout="wide")
-db_url = os.getenv("DATABASE_URL", "sqlite:///./webblock.db").replace("postgres://", "postgresql://", 1)
-engine = create_engine(db_url)
-
 st.title("🛡️ WebBlock Live Monitor")
 if st.button("🔄 Actualizar Datos"):
     st.rerun()
