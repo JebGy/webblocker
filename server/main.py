@@ -2,6 +2,7 @@ import os
 import uuid
 import csv
 import io
+from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Union
 
@@ -134,13 +135,29 @@ def verify_agent_or_admin(
     raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing API Key")
 
 
+def clean_domain_input(raw: str) -> str:
+    if not raw:
+        return ""
+    raw = raw.strip().lower()
+    if "://" in raw:
+        parsed = urlparse(raw)
+        host = parsed.netloc or parsed.path
+    elif "/" in raw or ":" in raw:
+        parsed = urlparse("//" + raw)
+        host = parsed.netloc or parsed.path
+    else:
+        host = raw
+    host = host.split(":")[0].strip("/. ")
+    return host
+
+
 def verify_admin(x_admin_key: Optional[str] = Header(None)):
     if x_admin_key == ADMIN_API_KEY:
         return True
     raise HTTPException(status_code=401, detail="Unauthorized: Admin Key required")
 
 
-LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.5")
+LATEST_AGENT_VERSION = os.getenv("LATEST_AGENT_VERSION", "1.0.6")
 
 
 # --- Versioning & Auto-Update Endpoints ---
@@ -212,18 +229,21 @@ def ingest_activity(payload: BatchActivityRequest, db: Session = Depends(get_db)
 
     items = payload.activities if isinstance(payload.activities, list) else [payload.activities]
 
-    records = [
-        WebActivity(
-            device_id=payload.device_id,
-            domain=item.domain.strip().lower(),
-            duration_seconds=item.duration_seconds,
-            logged_at=item.logged_at or datetime.now(timezone.utc),
-        )
-        for item in items
-        if item.domain
-    ]
-    db.bulk_save_objects(records)
-    db.commit()
+    records = []
+    for item in items:
+        clean = clean_domain_input(item.domain)
+        if clean and "." in clean:
+            records.append(
+                WebActivity(
+                    device_id=payload.device_id,
+                    domain=clean,
+                    duration_seconds=item.duration_seconds,
+                    logged_at=item.logged_at or datetime.now(timezone.utc),
+                )
+            )
+    if records:
+        db.bulk_save_objects(records)
+        db.commit()
     return {"status": "ok", "inserted": len(records)}
 
 
@@ -256,7 +276,9 @@ def list_all_blocked_domains(db: Session = Depends(get_db)):
 
 @app.post("/api/blocked-domains", dependencies=[Depends(verify_admin)])
 def add_blocked_domain(data: BlockDomainCreate, db: Session = Depends(get_db)):
-    domain_clean = data.domain.strip().lower()
+    domain_clean = clean_domain_input(data.domain)
+    if not domain_clean or "." not in domain_clean:
+        raise HTTPException(status_code=400, detail="Invalid domain or subdomain format")
     existing = db.query(BlockedDomain).filter(BlockedDomain.domain == domain_clean).first()
     if existing:
         existing.is_active = True
