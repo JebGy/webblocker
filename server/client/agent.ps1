@@ -471,6 +471,7 @@ while ($true) {
                     @{ server_url = $ServerUrl; api_key = $ApiKey; updated_at = (Get-Date).ToString("o") } | ConvertTo-Json | Set-Content $ConfigFile -Force
                     Log-Agent "API Key actualizada remotamente a: $ApiKey" "Cyan"
                 } catch {}
+                $lastHeartbeat = [DateTime]::MinValue
             }
         } catch {
             $consecutiveFailures++

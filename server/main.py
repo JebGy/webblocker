@@ -294,11 +294,24 @@ def get_active_blocked_domains(db: Session = Depends(get_db)):
 
 
 @app.post("/api/activity", dependencies=[Depends(verify_agent_or_admin)])
-def ingest_activity(payload: BatchActivityRequest, db: Session = Depends(get_db)):
+def ingest_activity(
+    payload: BatchActivityRequest,
+    x_agent_key: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
     """Ingests a batch of activity records buffered during offline/Starlink drops."""
     device = db.query(Device).filter(Device.id == payload.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+
+    # Confirm key rotation immediately on telemetry flush
+    if x_agent_key and device.pending_key and x_agent_key == device.pending_key:
+        device.current_key = device.pending_key
+        device.pending_key = None
+        db.commit()
+    elif x_agent_key and not device.current_key:
+        device.current_key = x_agent_key
+        db.commit()
 
     items = payload.activities if isinstance(payload.activities, list) else [payload.activities]
 
